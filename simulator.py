@@ -32,14 +32,12 @@ from numpy.random import choice
 # required for development
 from scml.std import *
 from AgeAgeAgent import AgeAgeAgent
-from agents.AS0_log import AS0_log
 
 from pathlib import Path
 from make_scml_log_viewer import generate_html_log
 import webbrowser
 
 
-__all__ = ["AS0"]
 
 class SimpleAgent(StdAgent):
     """A greedy agent based on StdAgent"""
@@ -271,10 +269,11 @@ if __name__ == '__main__':
     types = [
         # AS0_log,
         name_map_2025["PonponAgent"], 
-        name_map_2025["XenoSotaAgent"], 
         name_map_2025["AS0"],
-        name_map_2025["ProactiveAgent"], 
+        AgeAgeAgent, 
+        # name_map_2025["ProactiveAgent"], 
         name_map_2025["KATSUDONAgent"], 
+        name_map_2025["XenoSotaAgent"], 
         name_map_2024["PenguinAgent"], 
         name_map_2025["UltraSuperMiracleSoraFinalAgentZ"], 
         AgeAgeAgent, 
@@ -282,10 +281,11 @@ if __name__ == '__main__':
         # name_map_2025["OptimisticAgent"], 
         # name_map_2024["Group2"], 
         name_map_2024["AX"], 
-        name_map_2024["DogAgent"], 
+        # name_map_2024["DogAgent"], 
         name_map_2024["MatchingPennies"], 
-        name_map_2024["S5s"], 
+        name_map_2025["AS0"], 
         name_map_2024["CautiousStdAgent"], 
+        AgeAgeAgent, 
         # name_map_2025["AS0"],
         # name_map_2024["QuickDecisionAgent"], 
     ]
@@ -296,7 +296,7 @@ if __name__ == '__main__':
             agent_types = types,
             agent_processes=[0]*4 + [1]*5 + [2]*5,
             n_processes=3,
-            n_steps=50,
+            n_steps=125,
             construct_graphs=True,
             random_agent_types=False,
             name="test_world",

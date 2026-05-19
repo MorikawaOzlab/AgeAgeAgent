@@ -559,16 +559,23 @@ def build_html(app_data: dict[str, Any]) -> str:
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; }
+    html, body { max-width: 100%; overflow-x: hidden; }
     body { margin: 0; background: var(--bg); color: var(--text); }
     header { padding: 26px 28px 12px; }
     h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.03em; }
     .subtitle { color: var(--muted); font-size: 14px; }
-    main { padding: 14px 28px 36px; max-width: 1500px; margin: 0 auto; }
-    .grid { display: grid; gap: 16px; }
+    main { padding: 14px 28px 36px; max-width: 1500px; width: 100%; margin: 0 auto; overflow-x: hidden; }
+    .grid { display: grid; gap: 16px; min-width: 0; }
+    .grid > * { min-width: 0; }
     .grid-2 { grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr); }
-    .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; min-width: 0; }
     .card h2 { margin: 0 0 12px; font-size: 18px; }
     .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 14px; }
+    .chart-zoom-controls { align-items: center; margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px; background: #f8fafc; }
+    .chart-zoom-controls .field { min-width: 260px; }
+    .chart-zoom-controls input[type="range"] { width: 220px; padding: 0; }
+    .zoom-number { width: 88px; }
+    .zoom-label { min-width: 58px; color: var(--muted); font-size: 12px; font-weight: 800; }
     .field { display: grid; gap: 5px; min-width: 160px; }
     label { font-size: 12px; color: var(--muted); font-weight: 700; }
     select, input { height: 38px; border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; background: white; color: var(--text); font-size: 14px; }
@@ -591,6 +598,11 @@ def build_html(app_data: dict[str, Any]) -> str:
     .view.active { display: block; }
     canvas { width: 100%; height: 380px; display: block; }
     .small-chart { height: 300px; }
+    .chart-scroll { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; padding-bottom: 6px; border: 1px solid var(--line); border-radius: 14px; background: white; }
+    .chart-scroll canvas { display: block; }
+    .stats-chart-canvas { height: 380px; min-width: 100%; max-width: none; flex: 0 0 auto; }
+    .contract-chart-canvas { height: 300px; min-width: 100%; max-width: none; flex: 0 0 auto; }
+    .chart-scroll canvas.cached-chart { display: none; }
     .kpis { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin-bottom: 14px; }
     .kpi { border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: #fbfdff; }
     .kpi .name { color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -637,7 +649,7 @@ def build_html(app_data: dict[str, Any]) -> str:
           <label for="compareMode">stats表示</label>
           <select id="compareMode">
             <option value="single">選択エージェントのみ</option>
-            <option value="all">全エージェント比較</option>
+            <option value="all">全エージェント表示</option>
           </select>
         </div>
         <label class="checkbox"><input type="checkbox" id="normalizeCheck" /> statsを正規化</label>
@@ -682,7 +694,17 @@ def build_html(app_data: dict[str, Any]) -> str:
       <div class="grid grid-2">
         <div class="card">
           <h2>stats グラフ</h2>
-          <canvas id="statsChart"></canvas>
+          <div class="controls chart-zoom-controls">
+            <div class="field">
+              <label for="statsZoomRange">横軸倍率</label>
+              <input id="statsZoomRange" type="range" min="0.1" max="4" step="0.05" value="0.25" />
+            </div>
+            <input id="statsZoomInput" class="zoom-number" type="number" min="0.1" max="4" step="0.05" value="0.25" />
+            <span id="statsZoomLabel" class="zoom-label">25%</span>
+          </div>
+          <div id="statsChartScroller" class="chart-scroll stats-chart-scroll">
+            <canvas id="statsChart" class="stats-chart-canvas"></canvas>
+          </div>
           <div id="statsLegend" class="legend"></div>
         </div>
         <div class="card">
@@ -726,7 +748,15 @@ def build_html(app_data: dict[str, Any]) -> str:
       <div class="grid">
         <div class="card">
           <h2>stepごとの契約数</h2>
-          <canvas id="contractChart" class="small-chart"></canvas>
+          <div class="controls chart-zoom-controls">
+            <div class="field">
+              <label for="contractZoomRange">横軸倍率</label>
+              <input id="contractZoomRange" type="range" min="0.1" max="4" step="0.05" value="1" />
+            </div>
+            <input id="contractZoomInput" class="zoom-number" type="number" min="0.1" max="4" step="0.05" value="1" />
+            <span id="contractZoomLabel" class="zoom-label">100%</span>
+          </div>
+          <div id="contractChartScroller" class="chart-scroll"></div>
           <div id="contractChartLegend" class="legend"></div>
           <div id="contractChartNote" class="note"></div>
           <div id="contractStepTable" class="table-wrap compact-table"></div>
@@ -750,7 +780,36 @@ def build_html(app_data: dict[str, Any]) -> str:
     const $ = (id) => document.getElementById(id);
     const nf = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 3 });
     const colors = ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2', '#be123c', '#4d7c0f', '#9333ea', '#0f766e', '#b45309', '#1d4ed8', '#db2777', '#475569'];
+    const CONTRACT_CHART_STEP_WIDTH = 42;
+    const CONTRACT_CHART_BAR_WIDTH = 30;
+    const CONTRACT_CHART_HEIGHT = 300;
+    const STATS_CHART_BASE_STEP_WIDTH = 36;
+    const STATS_CHART_HEIGHT = 380;
+    let statsXAxisScale = 0.25;
+    let contractXAxisScale = 1;
     let selectedAgents = [];
+    let contractChartCache = new Map();
+    let contractChartPreRendered = false;
+    let visibleContractChartCanvas = null;
+    let resizeTimer = null;
+
+    // 表示切替を軽くするためのキャッシュ群。
+    // グラフや巨大テーブルは、同じ条件ならDOM/Canvasを作り直さない。
+    let agentNamesCache = null;
+    let baseContractStepLabelsCache = null;
+    const contractRowsCache = new Map();
+    const contractAggregateCache = new Map();
+    const contractPayloadCache = new Map();
+    const contractYMaxCache = new Map();
+    const contractInfoCache = new Map();
+    const partnerSummaryCache = new Map();
+    const actionTableCache = new Map();
+    const statsChartCache = new Map();
+    let lastStatsRenderKey = '';
+    let lastPartnerSummaryKey = '';
+    let lastActionTableKey = '';
+    let lastContractInfoKey = '';
+    let partnerOptionsDirty = false;
 
     function escapeHTML(value) {
       return String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
@@ -778,13 +837,56 @@ def build_html(app_data: dict[str, Any]) -> str:
     function uniqueSorted(values) {
       return [...new Set(values.filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), 'ja'));
     }
+
+    function clampZoom(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return 1;
+      return Math.min(4, Math.max(0.1, n));
+    }
+
+    function updateZoomLabel(kind) {
+      const scale = kind === 'stats' ? statsXAxisScale : contractXAxisScale;
+      const label = $(kind === 'stats' ? 'statsZoomLabel' : 'contractZoomLabel');
+      if (label) label.textContent = `${Math.round(scale * 100)}%`;
+    }
+
+    function syncZoomInputs(kind, scale) {
+      const prefix = kind === 'stats' ? 'stats' : 'contract';
+      const range = $(`${prefix}ZoomRange`);
+      const input = $(`${prefix}ZoomInput`);
+      const text = String(Math.round(scale * 100) / 100);
+      if (range) range.value = text;
+      if (input) input.value = text;
+      updateZoomLabel(kind);
+    }
+
+    function setStatsXAxisScale(value) {
+      statsXAxisScale = clampZoom(value);
+      syncZoomInputs('stats', statsXAxisScale);
+      lastStatsRenderKey = '';
+      renderStats(true);
+    }
+
+    function applyContractChartZoomToCanvas(canvas) {
+      if (!canvas) return;
+      const baseWidth = Number(canvas.dataset.baseCssWidth || canvas.style.width.replace('px', '') || canvas.width || 320);
+      canvas.style.width = `${Math.max(320, baseWidth * contractXAxisScale)}px`;
+    }
+
+    function applyContractXAxisScale(value) {
+      contractXAxisScale = clampZoom(value);
+      syncZoomInputs('contract', contractXAxisScale);
+      contractChartCache.forEach((entry) => applyContractChartZoomToCanvas(entry.canvas));
+    }
     function agentNames() {
+      if (agentNamesCache) return agentNamesCache;
       const names = new Set();
       Object.keys(DATA.stats?.agents || {}).forEach((x) => names.add(x));
       (DATA.negotiation?.agents || []).forEach((a) => names.add(a.name));
       (DATA.negotiation?.negotiations || []).forEach((n) => { if (n.agent0) names.add(n.agent0); if (n.agent1) names.add(n.agent1); });
       (DATA.negotiation?.actions || []).forEach((a) => { if (a.sender) names.add(a.sender); if (a.receiver) names.add(a.receiver); });
-      return uniqueSorted([...names]).filter((x) => !['NoAgent', 'SELLER', 'BUYER'].includes(x));
+      agentNamesCache = uniqueSorted([...names]).filter((x) => !['NoAgent', 'SELLER', 'BUYER'].includes(x));
+      return agentNamesCache;
     }
 
     function selectedAgentNames() {
@@ -867,6 +969,9 @@ def build_html(app_data: dict[str, Any]) -> str:
       $('agentButtonGrid').querySelectorAll('.choice-button').forEach((btn) => {
         btn.addEventListener('click', () => {
           const agent = btn.dataset.agent;
+          if (activeViewId() === 'statsView' && $('compareMode') && $('compareMode').value !== 'single') {
+            $('compareMode').value = 'single';
+          }
           if (!multiAgentSelectionAllowed()) {
             selectedAgents = [agent];
           } else {
@@ -895,7 +1000,11 @@ def build_html(app_data: dict[str, Any]) -> str:
       enforceAgentSelectionMode();
       syncPrimaryAgentSelect();
       updateAgentButtonStates();
-      updatePartnerSelect();
+      partnerOptionsDirty = true;
+      if (activeViewId() !== 'statsView') {
+        updatePartnerSelect();
+        partnerOptionsDirty = false;
+      }
       renderCurrentView();
     }
 
@@ -956,6 +1065,7 @@ def build_html(app_data: dict[str, Any]) -> str:
       const preferred = agents.find((a) => a.includes('My')) || agents.find((a) => a.includes('ASS0')) || agents[0];
       selectedAgents = preferred ? [preferred] : agents.slice(0, 1);
       syncPrimaryAgentSelect();
+      populateCompareModeOptions();
 
       const metrics = DATA.stats?.metrics || [];
       $('metricSelect').innerHTML = metrics.map((m) => `<option value="${escapeHTML(m)}">${escapeHTML(m)}</option>`).join('');
@@ -1097,15 +1207,29 @@ def build_html(app_data: dict[str, Any]) -> str:
 
     function drawStackedContractChart(canvas, labels, rows, yMax) {
       const ctx = canvas.getContext('2d');
-      const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = Math.max(320, Math.floor(rect.width * dpr));
-      canvas.height = Math.max(220, Math.floor(rect.height * dpr));
-      ctx.scale(dpr, dpr);
-      const w = rect.width, h = rect.height;
+      // たくさんの横長canvasを事前生成するため、契約グラフだけはdpr=1に固定して軽くする。
+      const dpr = 1;
+      const pad = { left: 52, right: 18, top: 30, bottom: 42 };
+      const innerW = Math.max(1, labels.length * CONTRACT_CHART_STEP_WIDTH);
+      const fallbackW = Math.max(
+        320,
+        Math.min(1460, (document.querySelector('main')?.clientWidth || window.innerWidth || 980) - 72)
+      );
+      const parentW = canvas.parentElement ? canvas.parentElement.clientWidth : 0;
+      const cssWidth = Math.max(320, fallbackW, parentW, pad.left + innerW + pad.right);
+      const cssHeight = CONTRACT_CHART_HEIGHT;
+
+      // step数が増えても棒を細くせず、canvas自体を横に長くして親要素で横スクロールする。
+      canvas.dataset.baseCssWidth = String(cssWidth);
+      canvas.style.width = `${cssWidth}px`;
+      canvas.style.height = `${cssHeight}px`;
+      canvas.width = Math.floor(cssWidth * dpr);
+      canvas.height = Math.floor(cssHeight * dpr);
+      applyContractChartZoomToCanvas(canvas);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const w = cssWidth, h = cssHeight;
       ctx.clearRect(0, 0, w, h);
-      const pad = { left: 52, right: 14, top: 24, bottom: 42 };
-      const innerW = Math.max(1, w - pad.left - pad.right);
       const innerH = Math.max(1, h - pad.top - pad.bottom);
       const maxY = Math.max(1, Math.ceil(yMax || 1));
       const sellColor = colors[3];
@@ -1124,44 +1248,41 @@ def build_html(app_data: dict[str, Any]) -> str:
         ctx.fillText(nf.format(value), pad.left - 8, y);
       }
 
-      const gap = 2;
-      const stepW = innerW / Math.max(1, labels.length);
-      const barW = Math.max(2, stepW - gap);
       rows.forEach((row, i) => {
-        const x = pad.left + i * stepW + gap / 2;
+        const x = pad.left + i * CONTRACT_CHART_STEP_WIDTH + (CONTRACT_CHART_STEP_WIDTH - CONTRACT_CHART_BAR_WIDTH) / 2;
         let bottom = pad.top + innerH;
         const buyH = (row.buyCount / maxY) * innerH;
         if (row.buyCount > 0) {
           ctx.fillStyle = buyColor;
-          ctx.fillRect(x, bottom - buyH, barW, buyH);
-          if (buyH > 16 && barW > 16) {
+          ctx.fillRect(x, bottom - buyH, CONTRACT_CHART_BAR_WIDTH, buyH);
+          if (buyH > 16) {
             ctx.fillStyle = 'white';
             ctx.font = '11px sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(String(row.buyCount), x + barW / 2, bottom - buyH / 2);
+            ctx.fillText(String(row.buyCount), x + CONTRACT_CHART_BAR_WIDTH / 2, bottom - buyH / 2);
           }
           bottom -= buyH;
         }
         const sellH = (row.sellCount / maxY) * innerH;
         if (row.sellCount > 0) {
           ctx.fillStyle = sellColor;
-          ctx.fillRect(x, bottom - sellH, barW, sellH);
-          if (sellH > 16 && barW > 16) {
+          ctx.fillRect(x, bottom - sellH, CONTRACT_CHART_BAR_WIDTH, sellH);
+          if (sellH > 16) {
             ctx.fillStyle = 'white';
             ctx.font = '11px sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(String(row.sellCount), x + barW / 2, bottom - sellH / 2);
+            ctx.fillText(String(row.sellCount), x + CONTRACT_CHART_BAR_WIDTH / 2, bottom - sellH / 2);
           }
         }
-        if ((row.sellCount + row.buyCount) > 0 && barW > 24) {
+        if ((row.sellCount + row.buyCount) > 0) {
           const totalTop = yAt(row.sellCount + row.buyCount);
           ctx.fillStyle = '#374151';
           ctx.font = '10px sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'bottom';
-          ctx.fillText(`S${row.sellQty}/B${row.buyQty}`, x + barW / 2, Math.max(10, totalTop - 3));
+          ctx.fillText(`S${row.sellQty}/B${row.buyQty}`, x + CONTRACT_CHART_BAR_WIDTH / 2, Math.max(10, totalTop - 3));
         }
       });
 
@@ -1175,12 +1296,12 @@ def build_html(app_data: dict[str, Any]) -> str:
       ctx.fillStyle = '#6b7280';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      const tickCount = Math.min(10, labels.length);
-      for (let i = 0; i < tickCount; i++) {
-        const idx = Math.round(i * (labels.length - 1) / Math.max(1, tickCount - 1));
-        const x = pad.left + (idx + 0.5) * stepW;
-        ctx.fillText(String(labels[idx]), x, h - pad.bottom + 14);
-      }
+      const labelInterval = labels.length > 80 ? 10 : labels.length > 40 ? 5 : labels.length > 20 ? 2 : 1;
+      labels.forEach((label, i) => {
+        if (i % labelInterval !== 0 && i !== labels.length - 1) return;
+        const x = pad.left + i * CONTRACT_CHART_STEP_WIDTH + CONTRACT_CHART_STEP_WIDTH / 2;
+        ctx.fillText(String(label), x, h - pad.bottom + 14);
+      });
     }
 
     function contractRoleFallback(c, agent) {
@@ -1221,22 +1342,36 @@ def build_html(app_data: dict[str, Any]) -> str:
     }
 
     function baseContractStepLabels() {
+      if (baseContractStepLabelsCache) return baseContractStepLabelsCache;
       const simSteps = (DATA.negotiation?.simsteps || []).map((s) => s.step).filter((s) => s !== null && s !== undefined);
-      if (simSteps.length) return uniqueSorted(simSteps.map(Number)).sort((a, b) => a - b);
+      if (simSteps.length) {
+        baseContractStepLabelsCache = uniqueSorted(simSteps.map(Number)).sort((a, b) => a - b);
+        return baseContractStepLabelsCache;
+      }
       const maxStep = Math.max(0, ...(DATA.negotiation?.negotiations || []).map((n) => Number(n.sim_step)).filter(Number.isFinite));
-      return Array.from({ length: maxStep + 1 }, (_, i) => i);
+      baseContractStepLabelsCache = Array.from({ length: maxStep + 1 }, (_, i) => i);
+      return baseContractStepLabelsCache;
+    }
+
+    function contractRowsCacheKey(agent, partner = '__ALL__') {
+      return `${agent}|||${partner}`;
     }
 
     function contractRowsForAgent(agent, partner = '__ALL__') {
-      return (DATA.negotiation?.negotiations || []).filter((n) => {
+      const key = contractRowsCacheKey(agent, partner);
+      if (contractRowsCache.has(key)) return contractRowsCache.get(key);
+      const rows = (DATA.negotiation?.negotiations || []).filter((n) => {
         if (!n.has_agreement) return false;
         if (n.agent0 !== agent && n.agent1 !== agent) return false;
         if (partner !== '__ALL__' && otherParty(n, agent) !== partner) return false;
         return true;
       }).sort((a, b) => (a.sim_step ?? -1) - (b.sim_step ?? -1) || (a.id ?? 0) - (b.id ?? 0));
+      contractRowsCache.set(key, rows);
+      return rows;
     }
 
-    function aggregateContractsByStep(contracts, agent, baseLabels = baseContractStepLabels()) {
+    function aggregateContractsByStep(contracts, agent, baseLabels = baseContractStepLabels(), cacheKey = null) {
+      if (cacheKey && contractAggregateCache.has(cacheKey)) return contractAggregateCache.get(cacheKey);
       const byStep = new Map(baseLabels.map((step) => [Number(step), {
         step: Number(step), sellCount: 0, buyCount: 0, sellQty: 0, buyQty: 0,
       }]));
@@ -1255,41 +1390,170 @@ def build_html(app_data: dict[str, Any]) -> str:
           row.buyQty += qty;
         }
       });
-      return [...byStep.values()].sort((a, b) => a.step - b.step);
+      const rows = [...byStep.values()].sort((a, b) => a.step - b.step);
+      if (cacheKey) contractAggregateCache.set(cacheKey, rows);
+      return rows;
     }
 
     function contractYAxisMaxForAllAgents(partner = '__ALL__') {
+      if (contractYMaxCache.has(partner)) return contractYMaxCache.get(partner);
       const labels = baseContractStepLabels();
       let maxCount = 1;
       agentNames().forEach((agent) => {
-        const rows = aggregateContractsByStep(contractRowsForAgent(agent, partner), agent, labels);
+        const key = contractRowsCacheKey(agent, partner);
+        const rows = aggregateContractsByStep(contractRowsForAgent(agent, partner), agent, labels, key);
         rows.forEach((row) => { maxCount = Math.max(maxCount, row.sellCount + row.buyCount); });
       });
+      contractYMaxCache.set(partner, maxCount);
       return maxCount;
     }
 
-    function renderStats() {
+    function agentLevelNumber(agentName) {
+      return agentLayerNumber(agentName);
+    }
+
+    function availableLevelNumbers() {
+      return [...new Set(Object.keys(DATA.stats?.agents || {})
+        .map(agentLevelNumber)
+        .filter((level) => level !== null && level !== undefined))]
+        .sort((a, b) => Number(a) - Number(b));
+    }
+
+    function agentsForLevel(level) {
+      return Object.keys(DATA.stats?.agents || {})
+        .filter((agent) => String(agentLevelNumber(agent)) === String(level));
+    }
+
+    function compareModeLevel() {
+      const value = $('compareMode')?.value || '';
+      const match = value.match(/^level:(\d+)$/);
+      return match ? match[1] : null;
+    }
+
+    function populateCompareModeOptions() {
+      const select = $('compareMode');
+      if (!select) return;
+      const current = select.value || 'single';
+      const levelOptions = availableLevelNumbers()
+        .map((level) => `<option value="level:${escapeHTML(level)}">レベル${escapeHTML(level)}を表示</option>`)
+        .join('');
+      select.innerHTML =
+        '<option value="single">選択エージェントのみ</option>' +
+        levelOptions +
+        '<option value="all">全エージェント表示</option>';
+      if (Array.from(select.options).some((option) => option.value === current)) {
+        select.value = current;
+      } else {
+        select.value = 'single';
+      }
+    }
+
+    function applyCompareModeSelection() {
+      const level = compareModeLevel();
+      if (level !== null) {
+        const levelAgents = agentsForLevel(level);
+        if (levelAgents.length) {
+          selectedAgents = levelAgents;
+          syncPrimaryAgentSelect();
+          updateAgentButtonStates();
+          partnerOptionsDirty = true;
+        }
+      }
+      renderStats(true);
+    }
+
+    function statsAgentsForCurrentMode() {
+      const compare = $('compareMode').value;
+      if (compare === 'all') return Object.keys(DATA.stats?.agents || {});
+      const level = compareModeLevel();
+      if (level !== null) return agentsForLevel(level);
+      return selectedAgentNames();
+    }
+
+    function statsChartSize() {
+      const steps = DATA.stats?.steps || [];
+      const scroller = $('statsChartScroller');
+      const containerW = scroller ? scroller.clientWidth : 0;
+      const width = Math.max(320, containerW, 64 + Math.max(1, steps.length) * STATS_CHART_BASE_STEP_WIDTH * statsXAxisScale);
+      return { width, height: STATS_CHART_HEIGHT };
+    }
+
+    function prepareStatsChartCanvas() {
+      const size = statsChartSize();
+      const canvas = $('statsChart');
+      canvas.style.width = `${size.width}px`;
+      canvas.style.height = `${size.height}px`;
+      return size;
+    }
+
+    function statsSelectionKey() {
+      const size = prepareStatsChartCanvas();
       const metric = $('metricSelect').value;
-      const agents = selectedAgentNames();
+      const compare = $('compareMode').value;
+      const normalize = $('normalizeCheck').checked ? '1' : '0';
+      const agents = compare === 'all' ? ['__ALL__'] : statsAgentsForCurrentMode();
+      return JSON.stringify({ metric, compare, normalize, agents, width: Math.round(size.width), height: Math.round(size.height) });
+    }
+
+    function copyCanvasToStatsChart(cached) {
+      const target = $('statsChart');
+      target.style.width = `${cached.cssWidth}px`;
+      target.style.height = `${cached.cssHeight}px`;
+      target.width = cached.canvas.width;
+      target.height = cached.canvas.height;
+      const ctx = target.getContext('2d');
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, target.width, target.height);
+      ctx.drawImage(cached.canvas, 0, 0);
+    }
+
+    function cacheCurrentStatsChart(key, legendHTML) {
+      const source = $('statsChart');
+      const clone = document.createElement('canvas');
+      clone.width = source.width;
+      clone.height = source.height;
+      clone.getContext('2d').drawImage(source, 0, 0);
+      statsChartCache.set(key, {
+        canvas: clone,
+        legendHTML,
+        cssWidth: parseFloat(source.style.width) || source.getBoundingClientRect().width,
+        cssHeight: parseFloat(source.style.height) || source.getBoundingClientRect().height,
+      });
+    }
+
+    function renderStats(force = false) {
+      const cacheKey = statsSelectionKey();
+      if (!force && lastStatsRenderKey === cacheKey) return;
+      const cached = statsChartCache.get(cacheKey);
+      if (cached) {
+        copyCanvasToStatsChart(cached);
+        $('statsLegend').innerHTML = cached.legendHTML;
+        lastStatsRenderKey = cacheKey;
+        if (!$('rankingTable').dataset.ready) renderRanking();
+        return;
+      }
+
+      const metric = $('metricSelect').value;
       const compare = $('compareMode').value;
       const normalize = $('normalizeCheck').checked;
       const steps = DATA.stats?.steps || [];
-      let series = [];
-      if (compare === 'all') {
-        series = Object.entries(DATA.stats?.agents || {}).map(([name, info], i) => {
-          let values = (info.metrics || {})[metric] || [];
-          if (normalize) values = normalizeValues(values);
-          return { name, values, color: colors[i % colors.length] };
-        }).filter((s) => s.values.length);
-      } else {
-        series = agents.map((agent, i) => {
-          let values = (((DATA.stats?.agents || {})[agent] || {}).metrics || {})[metric] || [];
-          if (normalize) values = normalizeValues(values);
-          return { name: agent, values, color: colors[i % colors.length] };
-        }).filter((s) => s.values.length);
+      const targetAgents = statsAgentsForCurrentMode();
+      const series = targetAgents.map((agent, i) => {
+        let values = (((DATA.stats?.agents || {})[agent] || {}).metrics || {})[metric] || [];
+        if (normalize) values = normalizeValues(values);
+        return { name: agent, values, color: colors[i % colors.length] };
+      }).filter((s) => s.values.length);
+
+      drawLineChart($('statsChart'), steps, series, { thin: compare !== 'single' || series.length > 1 });
+      let legendPrefix = '';
+      const level = compareModeLevel();
+      if (level !== null) {
+        legendPrefix = `<span>レベル${escapeHTML(level)}を表示</span>`;
       }
-      drawLineChart($('statsChart'), steps, series, { thin: compare === 'all' || series.length > 1 });
-      $('statsLegend').innerHTML = series.slice(0, 16).map((s, i) => `<span><i class="swatch" style="background:${s.color}"></i>${escapeHTML(s.name)}</span>`).join('') + (series.length > 16 ? `<span>...他 ${series.length - 16}</span>` : '');
+      const legendHTML = legendPrefix + series.slice(0, 16).map((s, i) => `<span><i class="swatch" style="background:${s.color}"></i>${escapeHTML(s.name)}</span>`).join('') + (series.length > 16 ? `<span>...他 ${series.length - 16}</span>` : '');
+      $('statsLegend').innerHTML = legendHTML;
+      cacheCurrentStatsChart(cacheKey, legendHTML);
+      lastStatsRenderKey = cacheKey;
       if (!$('rankingTable').dataset.ready) renderRanking();
     }
 
@@ -1342,7 +1606,16 @@ def build_html(app_data: dict[str, Any]) -> str:
       }).sort((a, b) => (a.sim_step ?? -1) - (b.sim_step ?? -1) || (a.neg_id ?? 0) - (b.neg_id ?? 0) || (a.neg_round ?? 0) - (b.neg_round ?? 0));
     }
 
-    function renderPartnerSummary() {
+    function renderPartnerSummary(force = false) {
+      const cacheKey = selectedAgentNames().join('|||');
+      if (!force && lastPartnerSummaryKey === cacheKey) return;
+      const cached = partnerSummaryCache.get(cacheKey);
+      if (cached) {
+        $('partnerSummary').innerHTML = cached;
+        attachPartnerSummaryEvents();
+        lastPartnerSummaryKey = cacheKey;
+        return;
+      }
       const partners = uniqueSorted((DATA.negotiation?.negotiations || []).filter(rowMatchesSelectedAgents).flatMap(otherPartiesForSelected));
       const rows = partners.map((p) => {
         const negs = (DATA.negotiation?.negotiations || []).filter((n) => rowMatchesSelectedAgents(n) && rowMatchesPartner(n, p));
@@ -1365,7 +1638,13 @@ def build_html(app_data: dict[str, Any]) -> str:
       const html = `<table><thead><tr><th>opponent</th><th>negotiations</th><th>agreements</th><th>agreement rate</th><th>total qty</th><th>avg price</th><th>total value</th><th>timeout</th><th>no agreement</th></tr></thead><tbody>` +
         rows.map((r) => `<tr data-partner="${escapeHTML(r.partner)}"><td class="left">${escapeHTML(r.partner)}</td><td>${fmt(r.negotiations)}</td><td>${fmt(r.agreements)}</td><td>${fmt(r.rate * 100)}%</td><td>${fmt(r.totalQty)}</td><td>${fmt(r.avgPrice)}</td><td>${fmt(r.totalValue)}</td><td>${fmt(r.timeouts)}</td><td>${fmt(r.noAgreement)}</td></tr>`).join('') +
         `</tbody></table>`;
+      partnerSummaryCache.set(cacheKey, html);
       $('partnerSummary').innerHTML = html;
+      attachPartnerSummaryEvents();
+      lastPartnerSummaryKey = cacheKey;
+    }
+
+    function attachPartnerSummaryEvents() {
       $('partnerSummary').querySelectorAll('tbody tr').forEach((tr) => tr.addEventListener('click', () => {
         $('partnerSelect').value = tr.dataset.partner;
         updatePartnerButtonStates();
@@ -1383,7 +1662,16 @@ def build_html(app_data: dict[str, Any]) -> str:
       return '';
     }
 
-    function renderActionTable() {
+    function renderActionTable(force = false) {
+      const cacheKey = JSON.stringify({ agents: selectedAgentNames(), partner: $('partnerSelect').value, state: $('actionStateSelect').value, q: $('actionSearch').value.trim().toLowerCase() });
+      if (!force && lastActionTableKey === cacheKey) return;
+      const cached = actionTableCache.get(cacheKey);
+      if (cached) {
+        $('actionCount').textContent = cached.countText;
+        $('actionTable').innerHTML = cached.html;
+        lastActionTableKey = cacheKey;
+        return;
+      }
       const rows = filteredActions();
       const limit = 500;
       $('actionCount').textContent = `${selectedAgentLabel()} の ${rows.length}件のアクションを表示対象にしています。表は最大${limit}件まで表示します。`;
@@ -1393,6 +1681,8 @@ def build_html(app_data: dict[str, Any]) -> str:
           return `<tr><td>${fmt(a.sim_step)}</td><td>${fmt(a.neg_id)}</td><td>${fmt(a.neg_round)}</td><td>${direction}</td><td class="left">${escapeHTML(a.sender)} → ${escapeHTML(a.receiver)}</td><td>${statePill(a.state)}</td><td>${fmt(a.quantity)}</td><td>${fmt(a.delivery_step)}</td><td>${fmt(a.unit_price)}</td><td>${fmt(a.time)}</td></tr>`;
         }).join('') + `</tbody></table>`;
       $('actionTable').innerHTML = html;
+      actionTableCache.set(cacheKey, { countText: $('actionCount').textContent, html });
+      lastActionTableKey = cacheKey;
     }
 
     function contractRows() {
@@ -1401,22 +1691,96 @@ def build_html(app_data: dict[str, Any]) -> str:
       return contractRowsForAgent(agent, partner);
     }
 
-    function renderContractChartAndTable() {
-      const agent = selectedAgentNames()[0];
-      const partner = $('partnerSelect').value;
-      const contracts = contractRows();
+
+    function contractChartKey(agent, partner = '__ALL__') {
+      return `${agent}|||${partner}`;
+    }
+
+    function contractPartnersForAgent(agent) {
+      // partner選択ボタンに出る可能性がある相手を、成立契約の有無に関係なく事前描画対象にする。
+      // これで契約が0件の相手を選んでも、切り替え時に新規描画しない。
+      const partners = uniqueSorted([
+        ...(DATA.negotiation?.negotiations || [])
+          .filter((n) => n.agent0 === agent || n.agent1 === agent)
+          .map((n) => otherParty(n, agent)),
+        ...(DATA.negotiation?.actions || [])
+          .filter((a) => a.sender === agent || a.receiver === agent)
+          .map((a) => otherParty(a, agent)),
+      ]);
+      return ['__ALL__', ...partners];
+    }
+
+    function buildContractChartPayload(agent, partner = '__ALL__') {
+      const payloadKey = contractChartKey(agent, partner);
+      if (contractPayloadCache.has(payloadKey)) return contractPayloadCache.get(payloadKey);
+      const contracts = contractRowsForAgent(agent, partner);
       const labels = baseContractStepLabels();
-      const stepRows = aggregateContractsByStep(contracts, agent, labels);
-      const chartRows = stepRows;
-      const chartLabels = chartRows.map((r) => r.step);
+      const stepRows = aggregateContractsByStep(contracts, agent, labels, payloadKey);
+      const chartLabels = stepRows.map((r) => r.step);
       const yMax = contractYAxisMaxForAllAgents(partner);
-      drawStackedContractChart($('contractChart'), chartLabels, chartRows, yMax);
-      $('contractChartLegend').innerHTML = [
+      const payload = { agent, partner, contracts, labels, stepRows, chartLabels, yMax };
+      contractPayloadCache.set(payloadKey, payload);
+      return payload;
+    }
+
+    function ensureContractChart(agent, partner = '__ALL__') {
+      const key = contractChartKey(agent, partner);
+      if (contractChartCache.has(key)) return contractChartCache.get(key);
+
+      const payload = buildContractChartPayload(agent, partner);
+      const canvas = document.createElement('canvas');
+      canvas.className = 'small-chart contract-chart-canvas cached-chart';
+      canvas.style.display = 'none';
+      canvas.dataset.contractChartKey = key;
+      canvas.setAttribute('aria-label', `${agent} ${partner} contract chart`);
+      $('contractChartScroller').appendChild(canvas);
+      drawStackedContractChart(canvas, payload.chartLabels, payload.stepRows, payload.yMax);
+
+      const entry = { ...payload, canvas };
+      contractChartCache.set(key, entry);
+      return entry;
+    }
+
+    function showContractChart(agent, partner = '__ALL__') {
+      // preRenderContractCharts() で作っておいたcanvasを表示/非表示するだけ。
+      // 毎回全canvasを走査すると重いので、直前に表示していたcanvasだけ非表示にする。
+      const entry = contractChartCache.get(contractChartKey(agent, partner)) || ensureContractChart(agent, partner);
+      if (visibleContractChartCanvas !== entry.canvas) {
+        if (visibleContractChartCanvas) visibleContractChartCanvas.style.display = 'none';
+        entry.canvas.style.display = 'block';
+        visibleContractChartCanvas = entry.canvas;
+      }
+      return entry;
+    }
+
+    function preRenderContractCharts() {
+      if (contractChartPreRendered) return;
+      contractChartPreRendered = true;
+      agentNames().forEach((agent) => {
+        contractPartnersForAgent(agent).forEach((partner) => ensureContractChart(agent, partner));
+      });
+    }
+
+    function clearContractChartCache() {
+      contractChartCache.forEach((entry) => entry.canvas.remove());
+      contractChartCache.clear();
+      contractChartPreRendered = false;
+      visibleContractChartCanvas = null;
+    }
+
+    function buildContractInfo(agent, partner, chartEntry) {
+      const infoKey = contractChartKey(agent, partner);
+      if (contractInfoCache.has(infoKey)) return contractInfoCache.get(infoKey);
+
+      const contracts = chartEntry.contracts;
+      const stepRows = chartEntry.stepRows;
+      const legendHTML = [
         `<span><i class="swatch" style="background:${colors[3]}"></i>売り契約数</span>`,
         `<span><i class="swatch" style="background:${colors[5]}"></i>買い契約数</span>`,
         `<span>棒の中の数字=契約数 / S・Bラベル=売り数量・買い数量</span>`,
+        `<span>step数が多い場合はグラフ部分を横スクロールできます</span>`,
       ].join('');
-      $('contractChartNote').textContent = `${agent} / ${partner === '__ALL__' ? '全交渉相手' : partner} の成立契約を sim_step ごとに集計しています。縦軸の最大値は全エージェント共通です。`;
+      const noteText = `${agent} / ${partner === '__ALL__' ? '全交渉相手' : partner} の成立契約を sim_step ごとに集計しています。縦軸の最大値は全エージェント共通です。契約グラフはページ読み込み時に全エージェント・全交渉相手分を事前描画し、切り替え時は表示/非表示だけを変更します。`;
 
       const sellCount = stepRows.reduce((s, r) => s + r.sellCount, 0);
       const buyCount = stepRows.reduce((s, r) => s + r.buyCount, 0);
@@ -1434,7 +1798,7 @@ def build_html(app_data: dict[str, Any]) -> str:
       const sellAvgPrice = sellQty ? sellValue / sellQty : null;
       const buyAvgPrice = buyQty ? buyValue / buyQty : null;
       const activeSteps = stepRows.filter((r) => (r.sellCount + r.buyCount) > 0).length;
-      $('contractKpis').innerHTML = [
+      const kpiHTML = [
         ['契約数', contracts.length],
         ['売り契約数', sellCount],
         ['買い契約数', buyCount],
@@ -1447,12 +1811,12 @@ def build_html(app_data: dict[str, Any]) -> str:
       ].map(([name, value]) => `<div class="kpi"><div class="name">${escapeHTML(name)}</div><div class="value">${fmt(value)}</div></div>`).join('');
 
       const nonZeroSteps = stepRows.filter((r) => (r.sellCount + r.buyCount) > 0);
-      $('contractStepTable').innerHTML = `<table><thead><tr><th>sim step</th><th>売り契約数</th><th>売り数量</th><th>買い契約数</th><th>買い数量</th><th>合計契約数</th><th>合計数量</th></tr></thead><tbody>` +
+      const stepTableHTML = `<table><thead><tr><th>sim step</th><th>売り契約数</th><th>売り数量</th><th>買い契約数</th><th>買い数量</th><th>合計契約数</th><th>合計数量</th></tr></thead><tbody>` +
         nonZeroSteps.map((r) => `<tr><td>${fmt(r.step)}</td><td>${fmt(r.sellCount)}</td><td>${fmt(r.sellQty)}</td><td>${fmt(r.buyCount)}</td><td>${fmt(r.buyQty)}</td><td>${fmt(r.sellCount + r.buyCount)}</td><td>${fmt(r.sellQty + r.buyQty)}</td></tr>`).join('') +
         `</tbody></table>`;
 
-      $('contractCount').textContent = `${agent} に関係する成立契約が ${contracts.length}件あります。`;
-      const html = `<table><thead><tr><th>sim step</th><th>neg id</th><th>opponent</th><th>売買区分</th><th>quantity</th><th>delivery</th><th>unit price</th><th>value</th><th>product</th><th>trading price</th><th>round</th></tr></thead><tbody>` +
+      const countText = `${agent} に関係する成立契約が ${contracts.length}件あります。`;
+      const contractTableHTML = `<table><thead><tr><th>sim step</th><th>neg id</th><th>opponent</th><th>売買区分</th><th>quantity</th><th>delivery</th><th>unit price</th><th>value</th><th>product</th><th>trading price</th><th>round</th></tr></thead><tbody>` +
         contracts.map((c) => {
           const opponent = otherParty(c, agent);
           const role = contractRoleForAgent(c, agent);
@@ -1460,8 +1824,28 @@ def build_html(app_data: dict[str, Any]) -> str:
           const value = (num(c.quantity) || 0) * (num(c.unit_price) || 0);
           return `<tr><td>${fmt(c.sim_step)}</td><td>${fmt(c.id)}</td><td class="left">${escapeHTML(opponent)}</td><td class="left">${escapeHTML(side)}</td><td>${fmt(c.quantity)}</td><td>${fmt(c.delivery_step)}</td><td>${fmt(c.unit_price)}</td><td>${fmt(value)}</td><td>${fmt(c.product)}</td><td>${fmt(c.trading_price)}</td><td>${fmt(c.round_step)}</td></tr>`;
         }).join('') + `</tbody></table>`;
-      $('contractTable').innerHTML = html;
+
+      const info = { legendHTML, noteText, kpiHTML, stepTableHTML, countText, contractTableHTML };
+      contractInfoCache.set(infoKey, info);
+      return info;
     }
+
+    function renderContractChartAndTable(force = false) {
+      const agent = selectedAgentNames()[0];
+      const partner = $('partnerSelect').value;
+      const chartEntry = showContractChart(agent, partner);
+      const infoKey = contractChartKey(agent, partner);
+      if (!force && lastContractInfoKey === infoKey) return;
+      const info = buildContractInfo(agent, partner, chartEntry);
+      $('contractChartLegend').innerHTML = info.legendHTML;
+      $('contractChartNote').textContent = info.noteText;
+      $('contractKpis').innerHTML = info.kpiHTML;
+      $('contractStepTable').innerHTML = info.stepTableHTML;
+      $('contractCount').textContent = info.countText;
+      $('contractTable').innerHTML = info.contractTableHTML;
+      lastContractInfoKey = infoKey;
+    }
+
 
     function renderWarnings() {
       const missing = DATA.negotiation?.missingFiles || [];
@@ -1472,19 +1856,22 @@ def build_html(app_data: dict[str, Any]) -> str:
       $('warningBox').innerHTML = `<div class="warning">dataフォルダ内で見つからなかったファイル: ${missing.map(escapeHTML).join(', ')}。見つかったデータだけでHTMLを生成しています。</div>`;
     }
 
-    function renderCurrentView() {
+    function renderCurrentView(force = false) {
       const selectionChanged = enforceAgentSelectionMode();
+      const view = activeViewId();
       updateScopedPickers();
       updateAgentButtonStates();
-      if (selectionChanged) updatePartnerSelect();
-      const view = activeViewId();
+      if ((selectionChanged || partnerOptionsDirty) && (view === 'negotiationView' || view === 'contractView')) {
+        updatePartnerSelect();
+        partnerOptionsDirty = false;
+      }
       if (view === 'statsView') {
-        renderStats();
+        renderStats(force);
       } else if (view === 'negotiationView') {
-        renderPartnerSummary();
-        renderActionTable();
+        renderPartnerSummary(force);
+        renderActionTable(force);
       } else if (view === 'contractView') {
-        renderContractChartAndTable();
+        renderContractChartAndTable(force);
       }
     }
 
@@ -1500,14 +1887,21 @@ def build_html(app_data: dict[str, Any]) -> str:
       $('agentSelect').addEventListener('change', () => { selectedAgents = [$('agentSelect').value]; afterAgentSelectionChanged(); });
       $('partnerSelect').addEventListener('change', () => { updatePartnerButtonStates(); renderCurrentView(); });
       $('metricSelect').addEventListener('change', () => { updateMetricButtonStates(); renderStats(); });
-      $('compareMode').addEventListener('change', renderStats);
-      $('normalizeCheck').addEventListener('change', renderStats);
-      $('actionStateSelect').addEventListener('change', renderActionTable);
-      $('actionSearch').addEventListener('input', renderActionTable);
+      $('compareMode').addEventListener('change', applyCompareModeSelection);
+      $('normalizeCheck').addEventListener('change', () => renderStats());
+      $('statsZoomRange').addEventListener('input', () => setStatsXAxisScale($('statsZoomRange').value));
+      $('statsZoomInput').addEventListener('change', () => setStatsXAxisScale($('statsZoomInput').value));
+      $('contractZoomRange').addEventListener('input', () => applyContractXAxisScale($('contractZoomRange').value));
+      $('contractZoomInput').addEventListener('change', () => applyContractXAxisScale($('contractZoomInput').value));
+      $('actionStateSelect').addEventListener('change', () => renderActionTable());
+      $('actionSearch').addEventListener('input', () => renderActionTable());
       window.addEventListener('resize', () => {
-        const view = activeViewId();
-        if (view === 'statsView') renderStats();
-        else if (view === 'contractView') renderContractChartAndTable();
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          // 契約分析グラフは初期描画済みcanvasの表示切替だけにするため、
+          // リサイズ時もキャッシュ破棄・再描画はしない。
+          if (activeViewId() === 'statsView') renderStats();
+        }, 160);
       });
       document.querySelectorAll('.tab').forEach((btn) => btn.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
@@ -1525,6 +1919,9 @@ def build_html(app_data: dict[str, Any]) -> str:
       $('subtitle').textContent = `generated: ${DATA.generatedAt} / stats agents: ${statsAgents} / actions: ${actions} / negotiations: ${negs}`;
       populateSelects();
       setupEvents();
+      syncZoomInputs('stats', statsXAxisScale);
+      syncZoomInputs('contract', contractXAxisScale);
+      preRenderContractCharts();
       renderAll();
     }
 

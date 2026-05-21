@@ -275,7 +275,7 @@ if __name__ == '__main__':
         name_map_2025["KATSUDONAgent"], 
         name_map_2025["XenoSotaAgent"], 
         name_map_2024["PenguinAgent"], 
-        name_map_2025["UltraSuperMiracleSoraFinalAgentZ"], 
+        name_map_2024["AX"], 
         AgeAgeAgent, 
         name_map_2025["AS0"],
         # name_map_2025["OptimisticAgent"], 

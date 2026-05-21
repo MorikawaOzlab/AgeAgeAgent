@@ -175,8 +175,8 @@ if __name__ == '__main__':
         competitors=tournament_types,
         n_configs=2, # number of different configurations to generate
         n_competitors_per_world=len(tournament_types),
-        n_runs_per_world=3, # number of times to repeat every simulation (with agent assignment)
-        n_steps=125, # number of days (simulation steps) per simulation 本番は50, 125, 200
+        n_runs_per_world=5, # number of times to repeat every simulation (with agent assignment)
+        n_steps=50, # number of days (simulation steps) per simulation 本番は50, 125, 200
         print_exceptions=False,
         verbose = True,
         tournament_path=r"C:\tmp\scml_t",

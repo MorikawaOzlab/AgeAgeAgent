@@ -747,7 +747,7 @@ def build_html(app_data: dict[str, Any]) -> str:
     <section id="contractView" class="view">
       <div class="grid">
         <div class="card">
-          <h2>stepごとの契約数</h2>
+          <h2>stepごとの取引量</h2>
           <div class="controls chart-zoom-controls">
             <div class="field">
               <label for="contractZoomRange">横軸倍率</label>
@@ -1251,8 +1251,8 @@ def build_html(app_data: dict[str, Any]) -> str:
       rows.forEach((row, i) => {
         const x = pad.left + i * CONTRACT_CHART_STEP_WIDTH + (CONTRACT_CHART_STEP_WIDTH - CONTRACT_CHART_BAR_WIDTH) / 2;
         let bottom = pad.top + innerH;
-        const buyH = (row.buyCount / maxY) * innerH;
-        if (row.buyCount > 0) {
+        const buyH = (row.buyQty / maxY) * innerH;
+        if (row.buyQty > 0) {
           ctx.fillStyle = buyColor;
           ctx.fillRect(x, bottom - buyH, CONTRACT_CHART_BAR_WIDTH, buyH);
           if (buyH > 16) {
@@ -1260,12 +1260,12 @@ def build_html(app_data: dict[str, Any]) -> str:
             ctx.font = '11px sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(String(row.buyCount), x + CONTRACT_CHART_BAR_WIDTH / 2, bottom - buyH / 2);
+            ctx.fillText(String(row.buyQty), x + CONTRACT_CHART_BAR_WIDTH / 2, bottom - buyH / 2);
           }
           bottom -= buyH;
         }
-        const sellH = (row.sellCount / maxY) * innerH;
-        if (row.sellCount > 0) {
+        const sellH = (row.sellQty / maxY) * innerH;
+        if (row.sellQty > 0) {
           ctx.fillStyle = sellColor;
           ctx.fillRect(x, bottom - sellH, CONTRACT_CHART_BAR_WIDTH, sellH);
           if (sellH > 16) {
@@ -1273,16 +1273,16 @@ def build_html(app_data: dict[str, Any]) -> str:
             ctx.font = '11px sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(String(row.sellCount), x + CONTRACT_CHART_BAR_WIDTH / 2, bottom - sellH / 2);
+            ctx.fillText(String(row.sellQty), x + CONTRACT_CHART_BAR_WIDTH / 2, bottom - sellH / 2);
           }
         }
-        if ((row.sellCount + row.buyCount) > 0) {
-          const totalTop = yAt(row.sellCount + row.buyCount);
+        if ((row.sellQty + row.buyQty) > 0) {
+          const totalTop = yAt(row.sellQty + row.buyQty);
           ctx.fillStyle = '#374151';
           ctx.font = '10px sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'bottom';
-          ctx.fillText(`S${row.sellQty}/B${row.buyQty}`, x + CONTRACT_CHART_BAR_WIDTH / 2, Math.max(10, totalTop - 3));
+          ctx.fillText(`S${row.sellCount}/B${row.buyCount}`, x + CONTRACT_CHART_BAR_WIDTH / 2, Math.max(10, totalTop - 3));
         }
       });
 
@@ -1398,14 +1398,14 @@ def build_html(app_data: dict[str, Any]) -> str:
     function contractYAxisMaxForAllAgents(partner = '__ALL__') {
       if (contractYMaxCache.has(partner)) return contractYMaxCache.get(partner);
       const labels = baseContractStepLabels();
-      let maxCount = 1;
+      let maxQty = 1;
       agentNames().forEach((agent) => {
         const key = contractRowsCacheKey(agent, partner);
         const rows = aggregateContractsByStep(contractRowsForAgent(agent, partner), agent, labels, key);
-        rows.forEach((row) => { maxCount = Math.max(maxCount, row.sellCount + row.buyCount); });
+        rows.forEach((row) => { maxQty = Math.max(maxQty, row.sellQty + row.buyQty); });
       });
-      contractYMaxCache.set(partner, maxCount);
-      return maxCount;
+      contractYMaxCache.set(partner, maxQty);
+      return maxQty;
     }
 
     function agentLevelNumber(agentName) {
@@ -1775,12 +1775,12 @@ def build_html(app_data: dict[str, Any]) -> str:
       const contracts = chartEntry.contracts;
       const stepRows = chartEntry.stepRows;
       const legendHTML = [
-        `<span><i class="swatch" style="background:${colors[3]}"></i>売り契約数</span>`,
-        `<span><i class="swatch" style="background:${colors[5]}"></i>買い契約数</span>`,
-        `<span>棒の中の数字=契約数 / S・Bラベル=売り数量・買い数量</span>`,
+        `<span><i class="swatch" style="background:${colors[3]}"></i>売り取引量</span>`,
+        `<span><i class="swatch" style="background:${colors[5]}"></i>買い取引量</span>`,
+        `<span>棒の高さ・中の数字=取引量 / S・Bラベル=売り契約数・買い契約数</span>`,
         `<span>step数が多い場合はグラフ部分を横スクロールできます</span>`,
       ].join('');
-      const noteText = `${agent} / ${partner === '__ALL__' ? '全交渉相手' : partner} の成立契約を sim_step ごとに集計しています。縦軸の最大値は全エージェント共通です。契約グラフはページ読み込み時に全エージェント・全交渉相手分を事前描画し、切り替え時は表示/非表示だけを変更します。`;
+      const noteText = `${agent} / ${partner === '__ALL__' ? '全交渉相手' : partner} の成立契約の取引量を sim_step ごとに集計しています。縦軸は取引量で、最大値は全エージェント共通です。契約グラフはページ読み込み時に全エージェント・全交渉相手分を事前描画し、切り替え時は表示/非表示だけを変更します。`;
 
       const sellCount = stepRows.reduce((s, r) => s + r.sellCount, 0);
       const buyCount = stepRows.reduce((s, r) => s + r.buyCount, 0);

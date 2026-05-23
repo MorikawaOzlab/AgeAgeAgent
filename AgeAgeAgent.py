@@ -33,8 +33,8 @@ class AgeAgeAgent(BaseAgent):
     BASE_AGENT_DISTRIBUTION = False
     BETTER_COUNTER_ALL = True
 
-    QUANTITY_AVG_DECAY = 0.7 # 取引量の加重平均の割引率
-    AVG_DECREASE_ON_FAULT = 1 # 取引に失敗したときに加重平均をどれくらい減らすか
+    QUANTITY_AVG_DECAY = 0.7 # 取引量の加重平均
+    AVG_DECREASE_ON_FAULT = 1
 
     partner_weighted_avg_quantity: dict[str, float]
     # 初回提案の内容を一時的に保持するための変数
@@ -98,7 +98,6 @@ class AgeAgeAgent(BaseAgent):
         
     def step(self):
         super().step()
-        # print(self.id, self.awi.total_sales, self.awi.total_supplies, self.get_needs())
 
     def first_proposals(self):
         if self.BASE_AGENT_FIRST_PROPOSALS:
@@ -144,9 +143,10 @@ class AgeAgeAgent(BaseAgent):
         response |= self.assign_delivery_steps_by_knapsack(buy_offers, "buy_offer", self.awi.current_step, True)
         response |= self.assign_delivery_steps_by_knapsack(sell_offers, "sell_offer", self.awi.current_step, True)
 
+        # print("supply needs: ", current_needs_supply, " consume needs: ", current_needs_consume)
         # print("生成したこちらからのオファー: ", offers)
         # print("エージェントごとの最適量: ", distribution)
-        # print(self.id, ": ナップサックによって選ばれたオファー: ", response)
+        # print("ナップサックによって選ばれたオファー: ", response)
         
         # print(self.awi.current_step, self.get_needs())
         # print(self.get_needs())
@@ -177,6 +177,7 @@ class AgeAgeAgent(BaseAgent):
         current_needs_supply, current_needs_consume = self.get_needs()
         _, selected_partners_supply = solve_knapsack_for_scml_offers(buy_offers, current_needs_supply)
         _, selected_partners_consume = solve_knapsack_for_scml_offers(sell_offers, current_needs_consume*2)
+
 
         # 受諾リストを作成
         for partner in selected_partners_supply:
@@ -346,9 +347,8 @@ class AgeAgeAgent(BaseAgent):
     def init_partner_avg_quantity(self, partners) -> None:
         """
         交渉パートナーの取引量の初期値をセット
-        初期値は、必要量を人数で分割
         """
-        buy_needs, sell_needs = self.get_needs(0, True)
+        buy_needs, sell_needs = self.get_needs(0)
 
         for partner in partners:
             self.partner_weighted_avg_quantity[partner] = (

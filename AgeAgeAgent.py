@@ -37,7 +37,7 @@ class AgeAgeAgent(BaseAgent):
     PRICE_AVG_DISCOUNT_RATE = 0.2
     AVG_DECREASE_ON_FAULT = 1 # 取引に失敗したときに加重平均をどれくらい減らすか
 
-    MIN_PROFIT = 20
+    MIN_PROFIT = -100
 
     avg_sell_price: float
     avg_buy_price: float
@@ -383,51 +383,50 @@ class AgeAgeAgent(BaseAgent):
         
     def init_partner_avg_price(self, partners) -> None:
         for partner in partners:
-            nmi = self.get_nmi(partner)
-            if nmi is None:
-                continue
+            price_issue = self.get_price_issue(partner)
             
             if partner in self.awi.my_suppliers:
-                self.partner_weighted_avg_price[partner] = nmi.issues[UNIT_PRICE].min_value
+                self.partner_weighted_avg_price[partner] = price_issue.min_value
                 self.avg_buy_price = self.partner_weighted_avg_price[partner]
             else:
-                self.partner_weighted_avg_price[partner] = nmi.issues[UNIT_PRICE].max_value        
+                self.partner_weighted_avg_price[partner] = price_issue.max_value        
                 self.avg_sell_price = self.partner_weighted_avg_price[partner]
 
     def is_valid_price(self, partner, price):
         """
         オファーの価格が、十分利益の出るものになっているか判定
         """
-
-        nmi = self.get_nmi(partner)
-        if nmi is None:
-            return
+        price_issue = self.get_price_issue(partner)
         
         #　価格がシステム上の適性値に入っていてかつ、MIN_PROFITの利益を確保できるかどうか   
         if (
             partner in self.awi.my_suppliers 
-            and price <= max(nmi.issues[UNIT_PRICE].min_value, min(nmi.issues[UNIT_PRICE].max_value, int(self.avg_sell_price - self.MIN_PROFIT)))
+            and price <= max(price_issue.min_value, min(price_issue.max_value, int(self.avg_sell_price - self.MIN_PROFIT)))
         ):
             return True
         elif(
             partner in self.awi.my_consumers
-            and price >= min(nmi.issues[UNIT_PRICE].max_value, max(nmi.issues[UNIT_PRICE].min_value, int(self.avg_buy_price + self.MIN_PROFIT)))
+            and price >= min(price_issue.max_value, max(price_issue.min_value, int(self.avg_buy_price + self.MIN_PROFIT)))
         ):
             return True
         else:
             return False
     
     def get_valid_price(self, partner):
-        nmi = self.get_nmi(partner)
-        if nmi is None:
-            return
+        price_issue = self.get_price_issue(partner)
 
         # 価格がMIN_PROFITの利益を確保できる値もしくはシステム上の上限or下限
         if partner in self.awi.my_suppliers:
-            return max(nmi.issues[UNIT_PRICE].min_value, min(nmi.issues[UNIT_PRICE].max_value, int(self.avg_sell_price - self.MIN_PROFIT)))
+            return max(price_issue.min_value, min(price_issue.max_value, int(self.avg_sell_price - self.MIN_PROFIT)))
         else:
-            return min(nmi.issues[UNIT_PRICE].max_value, max(nmi.issues[UNIT_PRICE].min_value, int(self.avg_buy_price + self.MIN_PROFIT)))
-
+            return min(price_issue.max_value, max(price_issue.min_value, int(self.avg_buy_price + self.MIN_PROFIT)))
+        
+    def get_price_issue(self, partner):
+        if partner in self.awi.my_suppliers:
+            return self.awi.current_input_issues[UNIT_PRICE]
+        else:
+            return self.awi.current_output_issues[UNIT_PRICE]
+        
 def solve_knapsack_for_scml_offers(
     offers: dict[str, tuple[int, int, int]],
     capacity: int,

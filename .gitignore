@@ -5,3 +5,5 @@ __pycache__/
 log.txt
 *.xlsx
 *.zip
+simple_tournament.py
+simulator.py

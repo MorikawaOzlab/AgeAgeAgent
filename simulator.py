@@ -267,12 +267,12 @@ if __name__ == '__main__':
 
     #エージェントの担当工場を変更する場合、typesのエージェントの順番を変える
     types = [
-        # AS0_log,
-        AgeAgeAgent, 
-        name_map_2025["AS0"],
-        # name_map_2025["ProactiveAgent"], 
         name_map_2025["KATSUDONAgent"], 
-        name_map_2025["PonponAgent"], 
+        # AS0_log,
+        # name_map_2025["ProactiveAgent"], 
+        AgeAgeAgent, 
+        name_map_2025["PriceTrendStdAgent"], 
+        name_map_2025["AS0"],
         name_map_2025["XenoSotaAgent"], 
         name_map_2024["PenguinAgent"], 
         name_map_2024["AX"], 
@@ -296,7 +296,7 @@ if __name__ == '__main__':
             agent_types = types,
             agent_processes=[0]*4 + [1]*5 + [2]*5,
             n_processes=3,
-            n_steps=125,
+            n_steps=50,
             construct_graphs=True,
             random_agent_types=False,
             name="test_world",

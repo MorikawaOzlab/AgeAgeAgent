@@ -24,6 +24,8 @@ class AgeAgeAgent(StdSyncAgent):
 
     avg_sell_price: float
     avg_buy_price: float
+    buy_urgency_multiplier: float
+    sell_urgency_multiplier: float
 
     partner_weighted_avg_quantity: dict[str, float]
     partner_weighted_avg_price: dict[str, float]
@@ -37,6 +39,8 @@ class AgeAgeAgent(StdSyncAgent):
         self.partner_weighted_avg_price = defaultdict(float)
         self.avg_buy_price = 0.0
         self.avg_sell_price = 0.0
+        self.buy_urgency_multiplier = 2.0
+        self.sell_urgency_multiplier = 1.5
         
     def on_negotiation_success(self, contract, mechanism):
         # パートナーごとの平均値の更新
@@ -72,6 +76,9 @@ class AgeAgeAgent(StdSyncAgent):
         input_unit_price = input_total_price / input_q
         self.update_partner_avg_price(None, input_unit_price, True)
         self.update_partner_avg_quantity("exogenous", input_q)
+
+        if awi.current_step == 0:
+            self.partner_weighted_avg_quantity["exogenous"] = input_q
 
     def first_proposals(self):
         current_step = self.awi.current_step
@@ -259,6 +266,13 @@ class AgeAgeAgent(StdSyncAgent):
         if step is None:
             step=awi.current_step
 
+        if self.partner_weighted_avg_quantity["exogenous"] != 0:
+            return self.urgency_multiplier(
+                step, 
+                is_first_proposals, 
+                *self.get_exogenous_needs(step, is_first_proposals)
+            )
+
         # 仕入れたい数(inventory input高すぎて基本負数)
         buy_needs = int(
             max(
@@ -279,12 +293,42 @@ class AgeAgeAgent(StdSyncAgent):
             )
         )
 
-        if is_first_proposals and step in range(awi.current_step, awi.current_step+3):
-            buy_needs = buy_needs * 2
-            sell_needs = int(sell_needs * 1.5)
-
-        return buy_needs, sell_needs
+        return self.urgency_multiplier(step, is_first_proposals, buy_needs, sell_needs)
         
+    def get_exogenous_needs(self, step, is_first_proposals):
+        awi = self.awi
+        exo_input = awi.current_exogenous_input_quantity
+        exo_output = awi.current_exogenous_output_quantity
+        
+        buy_needs = sell_needs = 0
+        if step == awi.current_step:
+            buy_needs = exo_input if awi.is_last_level else 0
+            sell_needs = exo_output if awi.is_first_level else 0
+        else:
+            buy_needs = math.ceil(self.partner_weighted_avg_quantity["exogenous"]) if awi.is_last_level else 0
+            sell_needs = math.ceil(self.partner_weighted_avg_quantity["exogenous"]) if awi.is_first_level else 0
+        
+        return self.urgency_multiplier(step, is_first_proposals, buy_needs, sell_needs)
+    
+    def urgency_multiplier(
+            self, 
+            step, 
+            is_first_proposals, 
+            buy_needs, 
+            sell_needs
+    ):
+        """
+        緊急時に必要量を増やし、それ以外ではそのまま必要量を返す
+        Returns:
+            buy_needs, sell_needs
+        """
+        awi = self.awi
+        if is_first_proposals and (awi.current_step <= step < awi.current_step + 3):
+            buy_needs = int(buy_needs * self.buy_urgency_multiplier)
+            sell_needs = int(sell_needs * self.sell_urgency_multiplier)
+        
+        return buy_needs, sell_needs
+
     def update_partner_avg_quantity(self, partner, quantity):
         """
         加重平均の計算

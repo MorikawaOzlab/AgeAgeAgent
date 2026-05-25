@@ -36,136 +36,7 @@ from AgeAgeAgent import AgeAgeAgent
 from pathlib import Path
 from make_scml_log_viewer import generate_html_log
 import webbrowser
-
-
-
-class SimpleAgent(StdAgent):
-    """A greedy agent based on StdAgent"""
-
-    def __init__(self, *args, production_level=0.25, future_concession=0.1, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.production_level = production_level
-        self.future_concession = future_concession
-
-    def propose(self, negotiator_id: str, state):
-        return self.good_offer(negotiator_id, state)
-
-    def respond(self, negotiator_id, state, source=""):
-        # accept any quantity needed at a good price
-        offer = state.current_offer
-        return (
-            ResponseType.ACCEPT_OFFER
-            if self.is_needed(negotiator_id, offer)
-            and self.is_good_price(negotiator_id, offer, state)
-            else ResponseType.REJECT_OFFER
-        )
-
-    def is_needed(self, partner, offer):
-        if offer is None:
-            return False
-        return offer[QUANTITY] <= self._needs(partner, offer[TIME])
-
-    def is_good_price(self, partner, offer, state):
-        # ending the negotiation is bad
-        if offer is None:
-            return False
-        nmi = self.get_nmi(partner)
-        if not nmi:
-            return False
-        issues = nmi.issues
-        minp = issues[UNIT_PRICE].min_value
-        maxp = issues[UNIT_PRICE].max_value
-        # use relative negotiation time to concede
-        # for offers about today but conede less for
-        # future contracts
-        r = state.relative_time
-        if offer[TIME] > self.awi.current_step:
-            r *= self.future_concession
-        # concede linearly
-        if self.is_consumer(partner):
-            return offer[UNIT_PRICE] >= minp + (1 - r) * (maxp - minp)
-        return -offer[UNIT_PRICE] >= -minp + (1 - r) * (minp - maxp)
-
-    def good_offer(self, partner, state):
-        nmi = self.get_nmi(partner)
-        if not nmi:
-            return None
-        issues = nmi.issues
-        qissue = issues[QUANTITY]
-        pissue = issues[UNIT_PRICE]
-        for t in sorted(list(issues[TIME].all)):
-            # find my needs for this day
-            needed = self._needs(partner, t)
-            if needed <= 0:
-                continue
-            offer = [-1] * 3
-            # ask for as much as I need for this day
-            offer[QUANTITY] = max(min(needed, qissue.max_value), qissue.min_value)
-            offer[TIME] = t
-            # use relative negotiation time to concede
-            # for offers about today but conede less for
-            # future contracts
-            r = state.relative_time
-            if t > self.awi.current_step:
-                r *= self.future_concession
-            # concede linearly on price
-            minp, maxp = pissue.min_value, pissue.max_value
-            if self.is_consumer(partner):
-                offer[UNIT_PRICE] = int(minp + (maxp - minp) * (1 - r) + 0.5)
-            else:
-                offer[UNIT_PRICE] = int(minp + (maxp - minp) * r + 0.5)
-            return tuple(offer)
-        # just end the negotiation if I need nothing
-        return None
-
-    def is_consumer(self, partner):
-        return partner in self.awi.my_consumers
-
-    def _needs(self, partner, t):
-        # find my needs today
-        if self.awi.is_first_level:
-            total_needs = self.awi.needed_sales
-        elif self.awi.is_last_level:
-            total_needs = self.awi.needed_supplies
-        else:
-            total_needs = self.production_level * self.awi.n_lines
-        # estimate future needs
-        if self.is_consumer(partner):
-            total_needs += (
-                self.production_level * self.awi.n_lines * (t - self.awi.current_step)
-            )
-            total_needs -= self.awi.total_sales_until(t)
-        else:
-            total_needs += (
-                self.production_level * self.awi.n_lines * (self.awi.n_steps - t - 1)
-            )
-            total_needs -= self.awi.total_supplies_between(t, self.awi.n_steps - 1)
-        # subtract already signed contracts
-        return int(total_needs)
-
-
-def distribute(q: int, n: int) -> list[int]:
-    if n <= 0:
-        return []
-    if q <= 0:
-        return [0] * n
-
-    if q < n:
-        lst = [0] * (n - q) + [1] * q
-        random.shuffle(lst)
-        return lst
-
-    if q == n:
-        return [1] * n
-
-    r = Counter(choice(n, q - n))
-    return [r.get(i, 0) + 1 for i in range(n)]
-
-
-def powerset(iterable):
-    s = list(iterable)
-    return chain.from_iterable(combinations(s, r) for r in range(len(s) + 1))
-    
+ 
 def export_and_plot_stats(stats_df: pd.DataFrame, excel_path: str = "stats.xlsx", show=True) -> None:
     """
     world.stats_df を
@@ -270,9 +141,9 @@ if __name__ == '__main__':
         name_map_2025["KATSUDONAgent"], 
         # AS0_log,
         # name_map_2025["ProactiveAgent"], 
-        AgeAgeAgent, 
         name_map_2025["PriceTrendStdAgent"], 
         name_map_2025["AS0"],
+        AgeAgeAgent, 
         name_map_2025["XenoSotaAgent"], 
         name_map_2024["PenguinAgent"], 
         name_map_2024["AX"], 

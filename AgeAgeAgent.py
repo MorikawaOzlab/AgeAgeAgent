@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from itertools import repeat
-import random
 from collections import defaultdict
 from typing import Literal
 import math
@@ -12,68 +10,36 @@ import math
 from negmas import *
 from scml.std import *
 
-from BaseAgent import BaseAgent
 
 from dataclasses import dataclass
 
 __all__ = ["AgeAgeAgent"]
 
-@dataclass
-class TradeStats:
-    success_count: int = 0
-    fault_count: int = 0
-
-class AgeAgeAgent(BaseAgent):
-    # 何もしない
-    NO_FIRST_PROPOSAL = False
-
-    # 改善した機能のオンオフ
-    BASE_AGENT_FIRST_PROPOSALS = False
-    BASE_AGENT_COUNTER_ALL = False
-    BASE_AGENT_DISTRIBUTION = False
-    BETTER_COUNTER_ALL = True
-
+class AgeAgeAgent(StdSyncAgent):
     QUANTITY_AVG_DISCOUNT_RATE = 0.2 # 取引量の加重平均の割引率
     PRICE_AVG_DISCOUNT_RATE = 0.2
     AVG_DECREASE_ON_FAULT = 1 # 取引に失敗したときに加重平均をどれくらい減らすか
 
-    MIN_PROFIT = -100
+    MIN_PROFIT = 0
 
     avg_sell_price: float
     avg_buy_price: float
 
     partner_weighted_avg_quantity: dict[str, float]
     partner_weighted_avg_price: dict[str, float]
-    # 初回提案の内容を一時的に保持するための変数
-    partner_first_offer: dict[str, tuple[int, int, int]] 
-    quantity_adjust: dict[str, int]
 
-    def __init__(self, *args, threshold=None, ptoday=0.70, productivity=0.7, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        # experimental
-        if not self.BASE_AGENT_DISTRIBUTION:
-            self.history_table: dict[tuple[str, int, int, int], TradeStats] = defaultdict(TradeStats)
     
         # 加重平均の計算を、negotiationsuccess, negotiation failture, counter allで行う
         # ついでに交渉テーブルも作りたい
         self.partner_weighted_avg_quantity = defaultdict(float)
         self.partner_weighted_avg_price = defaultdict(float)
-        self.partner_first_offer = {}
-        self.quantity_adjust = defaultdict(int)
         self.avg_buy_price = 0.0
         self.avg_sell_price = 0.0
         
     def on_negotiation_success(self, contract, mechanism):
-        if self.BASE_AGENT_DISTRIBUTION:
-            return 
-        
-        ##==============
-        ## 改良した配分
-        ##==============
-        
-        # 交渉結果テーブル作成
-
+        # パートナーごとの平均値の更新
         partner = next(p for p in contract.partners if p != self.id)
 
         agreement = contract.agreement
@@ -82,19 +48,8 @@ class AgeAgeAgent(BaseAgent):
         delivery_time = agreement["time"]
         unit_price = agreement["unit_price"]
 
-        self.history_table[
-            partner,
-            quantity,
-            delivery_time - self.awi.current_step,
-            unit_price,
-        ].success_count += 1
-
-        # 加重平均の計算
         self.update_partner_avg_quantity(partner, quantity)
-
-        # 平均取引価格の更新
         self.update_partner_avg_price(partner, unit_price)
-
 
     def on_negotiation_failure(self, partners, annotation, mechanism, state):
         # 契約が成立しなかった交渉相手の取引量の加重平均を減らす
@@ -105,8 +60,8 @@ class AgeAgeAgent(BaseAgent):
             current_quantity - self.AVG_DECREASE_ON_FAULT
         )
 
-
     def before_step(self):
+        # 外生契約の価格平均、取引量平均の計算
         awi = self.awi
         input_q = awi.current_exogenous_input_quantity
         input_total_price = awi.current_exogenous_input_price
@@ -116,103 +71,67 @@ class AgeAgeAgent(BaseAgent):
             
         input_unit_price = input_total_price / input_q
         self.update_partner_avg_price(None, input_unit_price, True)
+        self.update_partner_avg_quantity("exogenous", input_q)
 
     def first_proposals(self):
-        if self.BASE_AGENT_FIRST_PROPOSALS:
-            return super().first_proposals()
-        if self.awi.current_step == 0:
+        current_step = self.awi.current_step
+
+        if current_step == 0:
             partners = self.negotiators.keys()
             self.init_partner_avg_quantity(partners)
             self.init_partner_avg_price(partners)
 
-        # print(self.avg_buy_price, self.avg_sell_price)
-
-        offers = {}
-        buy_offers = {}
-        sell_offers = {}
-        response = {}
-
-        # 取引量を決定
         distribution = self.distribute_todays_needs()
 
-        # 価格を決定
-        for partner, quantity in distribution.items():
-            if quantity <= 0:
-                continue
+        _, buy_offers, sell_offers = self.determine_price(distribution)
 
-            if partner in self.awi.my_suppliers:
-                offers[partner] = (
-                    quantity,
-                    self.awi.current_step,
-                    self.get_valid_price(partner)
-                )
-
-                buy_offers[partner] = offers[partner]
-            elif partner in self.awi.my_consumers:
-                offers[partner] = (
-                    quantity,
-                    self.awi.current_step,
-                    self.get_valid_price(partner)
-                )
-
-                sell_offers[partner] = offers[partner]
-
-        # 納期を決定
-        response |= self.assign_delivery_steps_by_knapsack(buy_offers, "buy_offer", self.awi.current_step, True)
-        response |= self.assign_delivery_steps_by_knapsack(sell_offers, "sell_offer", self.awi.current_step, True)
-
-        # print("ナップサックによって選ばれたオファー: ", response)
-        return response 
+        proposals = self.assign_delivery_steps_by_knapsack(
+            buy_offers,
+            "buy_offer",
+            current_step,
+            True,
+        )
+        proposals |= self.assign_delivery_steps_by_knapsack(
+            sell_offers,
+            "sell_offer",
+            current_step,
+            True,
+        )
+        # print("ナップサックによって選ばれたオファー: ", proposals)
+        return proposals 
 
     def counter_all(self, offers, states):
-        if self.BASE_AGENT_COUNTER_ALL:
-            return super().counter_all(offers, states)
+        if self.awi.my_input_product == 0:
+            for partner, offer in offers.items():
+                state = states[partner]
+
+                round_index = state.step
+                # print(round_index)
 
         response = {}
         buy_offers = {}
         sell_offers = {}
         
-        # 買い契約と売り契約に仕分け
+        # 利益が出るオファーかどうかチェック
         for partner, offer in offers.items():
+            # 利益が出ないオファーは価格を修正してカウンターオファーを設定
+            if not self.is_valid_price(partner, offer[UNIT_PRICE]):
+                self.make_counter_offer_with_valid_price(response, offer, partner)
+                continue
+
+            buy_needs, sell_needs = self.get_needs(offer[TIME])
+
+            # 利益が出るオファーは買いオファーと売りオファーに仕分ける
             response[partner] = SAOResponse(
                 ResponseType.END_NEGOTIATION, None
             )
-            if partner in self.awi.my_suppliers:
-                price_issue = self.awi.current_input_issues[UNIT_PRICE]
-                buy_offers[partner] = offer
-            else:
-                sell_offers[partner] = offer
+            self.add_offer_by_partner_type(partner, offer, buy_offers, sell_offers)
 
-        # 最適なオファーの組み合わせを探索
-        current_needs_supply, current_needs_consume = self.get_needs()
-        _, selected_partners_supply = solve_knapsack_for_scml_offers(buy_offers, current_needs_supply)
-        _, selected_partners_consume = solve_knapsack_for_scml_offers(sell_offers, current_needs_consume*2)
+        # 納期がこちらの希望とあってるかチェック
+        new_offers = self.assign_delivery_steps_by_knapsack(buy_offers, "buy_offer", self.awi.current_step)
 
-        # 受諾リストを作成
-        for partner in selected_partners_supply:
-            response[partner] = SAOResponse(
-                ResponseType.ACCEPT_OFFER, None
-            )
-            
-        for partner in selected_partners_consume:
-            response[partner] = SAOResponse(
-                ResponseType.ACCEPT_OFFER, None
-            )
-
-        if not self.BETTER_COUNTER_ALL:
-            return response
-
-        # 改善されたカウンターオール
-
-        #==================
-        # 試験的実装！！リファクタリング必須！！
-        #=================
-        response = {}
-        # 相手から来たオファーに対しこちらの理想的な納期を設定
-        offers = self.assign_delivery_steps_by_knapsack(buy_offers, "buy_offer", self.awi.current_step)
-
-        for partner, offer in offers.items():
-            if offer[TIME] == buy_offers[partner][TIME] and self.is_valid_price(partner, offer[UNIT_PRICE]):
+        for partner, offer in new_offers.items():
+            if offer[TIME] == buy_offers[partner][TIME]:
                 response[partner] = SAOResponse(
                     ResponseType.ACCEPT_OFFER, None
                 )
@@ -227,10 +146,10 @@ class AgeAgeAgent(BaseAgent):
                 )
                     
         # 売りオファー
-        offers = self.assign_delivery_steps_by_knapsack(sell_offers, "sell_offer", self.awi.current_step)
+        new_offers = self.assign_delivery_steps_by_knapsack(sell_offers, "sell_offer", self.awi.current_step)
 
-        for partner, offer in offers.items():
-            if offer[TIME] == sell_offers[partner][TIME] and self.is_valid_price(partner, offer[UNIT_PRICE]):
+        for partner, offer in new_offers.items():
+            if offer[TIME] == sell_offers[partner][TIME]:
                 response[partner] = SAOResponse(
                     ResponseType.ACCEPT_OFFER, None
                 )
@@ -252,12 +171,6 @@ class AgeAgeAgent(BaseAgent):
         """
         if partners is None:
             partners = self.negotiators.keys()
-
-        if self.NO_FIRST_PROPOSAL:
-            return dict(zip(partners, repeat(0)))
-
-        if self.BASE_AGENT_DISTRIBUTION:
-            return super().distribute_todays_needs()
         
         # 単純にこれまでの取引量の加重平均を取引量を返す
         response = {}
@@ -265,6 +178,32 @@ class AgeAgeAgent(BaseAgent):
             response[partner] = round(self.partner_weighted_avg_quantity[partner])
         return response
 
+    def determine_price(self, distribution):
+        """
+        取引量のみが設定されたオファーに利益の出る価格を設定して返す
+        Args:
+            distribution: 取引相手ごとの取引量。
+        Returns:
+            全オファー、買いオファー、売りオファーのタプル。
+        """
+        offers = {}
+        buy_offers = {}
+        sell_offers = {}
+
+        for partner, quantity in distribution.items():
+            if quantity <= 0:
+                continue
+
+            offers[partner] = (
+                quantity,
+                self.awi.current_step,
+                self.get_valid_price(partner)
+            )
+
+            self.add_offer_by_partner_type(partner, offers[partner], buy_offers, sell_offers)
+        
+        return offers, buy_offers, sell_offers
+    
     def assign_delivery_steps_by_knapsack(self, offers, mode: str, step=0, is_first_proposals=False):
         """
         量と価格が決まっているオファーに対し、引数stepにおける必要量から動的計画法によって最適な納期を割り当てるメソッド
@@ -275,9 +214,12 @@ class AgeAgeAgent(BaseAgent):
         Returns:
             offers
         """
-
         response = {}
-        price_mode = "low" if mode == "buy_offer" else "high"
+
+        # 終了条件
+        if step > self.awi.n_steps - 1:
+            return response
+        
         remaining_offers = offers.copy()
         needs: int
 
@@ -287,12 +229,9 @@ class AgeAgeAgent(BaseAgent):
             _, needs = self.get_needs(step, is_first_proposals)
         else:
             return response
-
-        # 終了条件
-        if step > self.awi.n_steps-1:
-            return response
         
         # 動的計画法
+        price_mode = "low" if mode == "buy_offer" else "high"
         _, selected_partners = solve_knapsack_for_scml_offers(offers, needs, price_mode)
 
         for partner in selected_partners:
@@ -305,8 +244,8 @@ class AgeAgeAgent(BaseAgent):
             remaining_offers.pop(partner)
 
         # このstepで使わないオファーは次のstepで使う
-        if len(remaining_offers) > 0:
-            response |= self.assign_delivery_steps_by_knapsack(remaining_offers, mode, step+1)
+        if remaining_offers:
+            response |= self.assign_delivery_steps_by_knapsack(remaining_offers, mode, step + 1, is_first_proposals)
 
         return response
     
@@ -317,22 +256,21 @@ class AgeAgeAgent(BaseAgent):
             buy_needs, sell_needs
         """
         awi = self.awi
-        day_production = awi.n_lines * self._productivity
-        if step==None:
+        if step is None:
             step=awi.current_step
 
         # 仕入れたい数(inventory input高すぎて基本負数)
         buy_needs = int(
             max(
-                # 契約済み売り取引量 - 在庫 - 契約済み買い取引量 + 最大生産能力に対する不足分の50%
+                # 契約済み売り取引量 - 在庫 - 契約済み買い取引量 + 最大生産能力に対する不足分の70%
                 0,
                 awi.total_sales_at(step)
                 - awi.current_inventory_input
                 - awi.total_supplies_at(step)
-                + (awi.n_lines - awi.total_sales_at(step))
+                + (awi.n_lines - awi.total_sales_at(step)) * 0.7
             )
         )
-        # 売りたい数(何か間違いがありそう)
+        # 売りたい数
         sell_needs = int(
             max(
                 0,
@@ -369,7 +307,7 @@ class AgeAgeAgent(BaseAgent):
         for partner in partners:
             self.partner_weighted_avg_quantity[partner] = (
                 math.ceil(buy_needs / len(self.awi.my_suppliers))
-                if self.is_supplier(partner)
+                if partner in self.awi.my_suppliers
                 else math.ceil(sell_needs / len(self.awi.my_consumers))
             )
     
@@ -394,39 +332,49 @@ class AgeAgeAgent(BaseAgent):
 
     def is_valid_price(self, partner, price):
         """
-        オファーの価格が、十分利益の出るものになっているか判定
+        オファーの価格が、十分利益の出るものになっているか判定する。
         """
-        price_issue = self.get_price_issue(partner)
-        
-        #　価格がシステム上の適性値に入っていてかつ、MIN_PROFITの利益を確保できるかどうか   
-        if (
-            partner in self.awi.my_suppliers 
-            and price <= max(price_issue.min_value, min(price_issue.max_value, int(self.avg_sell_price - self.MIN_PROFIT)))
-        ):
-            return True
-        elif(
-            partner in self.awi.my_consumers
-            and price >= min(price_issue.max_value, max(price_issue.min_value, int(self.avg_buy_price + self.MIN_PROFIT)))
-        ):
-            return True
-        else:
-            return False
+        valid_price = self.get_valid_price(partner)
+
+        if partner in self.awi.my_suppliers:
+            return price <= valid_price
+
+        if partner in self.awi.my_consumers:
+            return price >= valid_price
+
+        return False
     
     def get_valid_price(self, partner):
         price_issue = self.get_price_issue(partner)
 
         # 価格がMIN_PROFITの利益を確保できる値もしくはシステム上の上限or下限
         if partner in self.awi.my_suppliers:
-            return max(price_issue.min_value, min(price_issue.max_value, int(self.avg_sell_price - self.MIN_PROFIT)))
+            return max(price_issue.min_value, min(price_issue.max_value, math.ceil(self.avg_sell_price - self.MIN_PROFIT)))
         else:
-            return min(price_issue.max_value, max(price_issue.min_value, int(self.avg_buy_price + self.MIN_PROFIT)))
+            return min(price_issue.max_value, max(price_issue.min_value, math.ceil(self.avg_buy_price + self.MIN_PROFIT)))
         
     def get_price_issue(self, partner):
         if partner in self.awi.my_suppliers:
             return self.awi.current_input_issues[UNIT_PRICE]
         else:
             return self.awi.current_output_issues[UNIT_PRICE]
-        
+    
+    def add_offer_by_partner_type(self, partner, offer, buy_offers, sell_offers):
+        """オファーを仕入れ先/販売先ごとに仕分ける。"""
+        if partner in self.awi.my_suppliers:
+            buy_offers[partner] = offer
+        elif partner in self.awi.my_consumers:
+            sell_offers[partner] = offer
+
+    def make_counter_offer_with_valid_price(self, response, offer, partner):
+        new_offer = (
+            offer[QUANTITY],
+            offer[TIME],
+            self.get_valid_price(partner)
+        )
+        response[partner] = SAOResponse(
+            ResponseType.REJECT_OFFER, new_offer
+        )
 def solve_knapsack_for_scml_offers(
     offers: dict[str, tuple[int, int, int]],
     capacity: int,

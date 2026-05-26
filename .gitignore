@@ -7,3 +7,5 @@ log.txt
 *.zip
 simple_tournament.py
 simulator.py
+scml_log_viewer.html
+scml_simulation_report.html

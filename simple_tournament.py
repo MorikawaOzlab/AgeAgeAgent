@@ -163,17 +163,17 @@ def shorten_names(results):
     results.winners = [_.split(".")[-1] for _ in results.winners]
     return results
 
-# 昨年の優勝エージェントを取得
-# 他の年のエージェントを入れる場合はversionを変更
-winners_2025 = get_agents(version=2025, track="std", winners_only=False, as_class=True)
-
-# tournament_types = [SimpleAgent, OptimisticAgent, AgeAgeAgent] + winners_2025 #random.sample(list(winners_2025), 8) #自分のエージェントクラスをここに追加して実行
-tournament_types = [AgeAgeAgent] + random.sample(list(winners_2025), 7)
 
 if __name__ == '__main__':
+    # 昨年の優勝エージェントを取得
+    # 他の年のエージェントを入れる場合はversionを変更
+    winners_2025 = get_agents(version=2025, track="std", winners_only=False, as_class=True)
+
+    # tournament_types = [SimpleAgent, OptimisticAgent, AgeAgeAgent] + winners_2025 #random.sample(list(winners_2025), 8) #自分のエージェントクラスをここに追加して実行
+    tournament_types = [AgeAgeAgent] + random.sample(list(winners_2025), 7)
     results = anac2024_std(
         competitors=tournament_types,
-        n_configs=2, # number of different configurations to generate
+        n_configs=3, # number of different configurations to generate
         n_competitors_per_world=len(tournament_types),
         n_runs_per_world=5, # number of times to repeat every simulation (with agent assignment)
         n_steps=50, # number of days (simulation steps) per simulation 本番は50, 125, 200

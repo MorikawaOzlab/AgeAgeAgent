@@ -321,23 +321,19 @@ class AgeAgeAgent(BaseAgent):
             buy_needs, sell_needs
         """
         awi = self.awi
-        day_production = awi.n_lines * self._productivity
         if step==None:
             step=awi.current_step
 
-        # 仕入れたい数(inventory input高すぎて基本負数)
         buy_needs = int(
             max(
-                # 契約済み売り取引量 - 在庫 - 契約済み買い取引量 + 最大生産能力に対する不足分の50%
                 0,
-                awi.total_sales_at(step)
-                - awi.current_inventory_input
-                - awi.total_supplies_at(step)
-                + (awi.n_lines - awi.total_sales_at(step))
+                awi.n_lines * 0.7
+                - self.awi.current_inventory_input
             )
         )
+        if step != awi.current_step:
+            buy_needs = 0
 
-        # 売りたい数(何か間違いがありそう)
         sell_needs = int(
             max(
                 0,
@@ -346,9 +342,9 @@ class AgeAgeAgent(BaseAgent):
             )
         )
 
-        if is_first_proposals and step in range(awi.current_step, awi.current_step+2):
+        if is_first_proposals and step in range(awi.current_step, awi.current_step+1):
             buy_needs = int(buy_needs * 1.5)
-            # sell_needs = int(sell_needs * 1.5)
+            sell_needs = int(sell_needs * 1.25)
 
         return buy_needs, sell_needs
         

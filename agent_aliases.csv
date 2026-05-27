@@ -1,0 +1,11 @@
+﻿alias,original_class,original_module,original_full_name
+AGE,AgeAgeAgent,AgeAgeAgent,AgeAgeAgent.AgeAgeAgent
+LA1,LitaAgentY,scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_y,scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_y.LitaAgentY
+US2,UltraSuperMiracleSoraFinalAgentZ,scml_agents.scml2025.standard.team_254.ultra,scml_agents.scml2025.standard.team_254.ultra.UltraSuperMiracleSoraFinalAgentZ
+XS3,XenoSotaAgent,scml_agents.scml2025.standard.team_253.master_sota_agent,scml_agents.scml2025.standard.team_253.master_sota_agent.XenoSotaAgent
+LA4,LitaAgentYR,scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_yr,scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_yr.LitaAgentYR
+KA5,KATSUDONAgent,scml_agents.scml2025.standard.team_268.katsudon_agent,scml_agents.scml2025.standard.team_268.katsudon_agent.KATSUDONAgent
+PR6,ProactiveAgent,scml_agents.scml2025.standard.team_255.proactive_agent,scml_agents.scml2025.standard.team_255.proactive_agent.ProactiveAgent
+LA7,LitaAgentP,scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_p,scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_p.LitaAgentP
+PO8,PonponAgent,scml_agents.scml2025.standard.team_255.myagent,scml_agents.scml2025.standard.team_255.myagent.PonponAgent
+OPT,OptimisticAgent,scml_agents.scml2025.standard.team_268.optimistic_agent,scml_agents.scml2025.standard.team_268.optimistic_agent.OptimisticAgent

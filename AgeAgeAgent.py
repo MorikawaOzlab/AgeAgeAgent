@@ -35,7 +35,7 @@ class AgeAgeAgent(BaseAgent):
 
     QUANTITY_AVG_DISCOUNT_RATE = 0.2 # 取引量の加重平均の割引率
     PRICE_AVG_DISCOUNT_RATE = 0.2
-    AVG_DECREASE_ON_FAULT = 1 # 取引に失敗したときに加重平均をどれくらい減らすか
+    AVG_DECREASE_ON_FAULT = 0.5 # 取引に失敗したときに加重平均をどれくらい減らすか
 
     MIN_PROFIT = -100
 
@@ -159,7 +159,7 @@ class AgeAgeAgent(BaseAgent):
         response |= self.assign_delivery_steps_by_knapsack(buy_offers, "buy_offer", self.awi.current_step, True)
         response |= self.assign_delivery_steps_by_knapsack(sell_offers, "sell_offer", self.awi.current_step, True)
 
-        # print("ナップサックによって選ばれたオファー: ", response)
+        print("ナップサックによって選ばれたオファー: ", response)
         return response 
 
     def counter_all(self, offers, states):
@@ -265,8 +265,32 @@ class AgeAgeAgent(BaseAgent):
         
         # 単純にこれまでの取引量の加重平均を取引量を返す
         response = {}
+        buy_needs, sell_needs = self.get_needs()
+
+        # 売り手と買い手ごとに平均取引数の合計値を得る
+        seller_total_avg_quantity = 0
+        buyer_total_avg_quantity = 0
+
         for partner in partners:
-            response[partner] = round(self.partner_weighted_avg_quantity[partner])
+            partner_quantity = self.partner_weighted_avg_quantity[partner]
+
+            if partner in self.awi.my_suppliers:
+                seller_total_avg_quantity += partner_quantity
+            elif partner in self.awi.my_consumers:
+                buyer_total_avg_quantity += partner_quantity
+
+        # 重みをつけて分配
+        for partner in partners:
+            partner_quantity = self.partner_weighted_avg_quantity[partner]
+
+            if partner in self.awi.my_suppliers:
+                response[partner] = math.ceil(
+                    partner_quantity / seller_total_avg_quantity * buy_needs / len(self.awi.my_suppliers)
+                )
+            elif partner in self.awi.my_consumers:
+                response[partner] = math.ceil(
+                    partner_quantity / buyer_total_avg_quantity * sell_needs / len(self.awi.my_consumers)
+                )
         return response
 
     def assign_delivery_steps_by_knapsack(self, offers, mode: str, step=0, is_first_proposals=False):

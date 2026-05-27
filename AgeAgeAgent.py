@@ -163,15 +163,20 @@ class AgeAgeAgent(BaseAgent):
         return response 
 
     def counter_all(self, offers, states):
-        if self.BASE_AGENT_COUNTER_ALL:
-            return super().counter_all(offers, states)
-
         response = {}
         buy_offers = {}
         sell_offers = {}
         
         # 買い契約と売り契約に仕分け
         for partner, offer in offers.items():
+            # パートナーごとに適性価格を設定
+            # min_price = self.calculate_min_price(partner)
+            # min_quantity = self.calculate_min_quantity(partner)
+
+            # 適正価格よりも利益が出ない価格になっていた場合、修正してカウンターオファー
+
+
+            # 初期化
             response[partner] = SAOResponse(
                 ResponseType.END_NEGOTIATION, None
             )
@@ -181,66 +186,67 @@ class AgeAgeAgent(BaseAgent):
             else:
                 sell_offers[partner] = offer
 
-        # 最適なオファーの組み合わせを探索
-        current_needs_supply, current_needs_consume = self.get_needs()
-        _, selected_partners_supply = solve_knapsack_for_scml_offers(buy_offers, current_needs_supply)
-        _, selected_partners_consume = solve_knapsack_for_scml_offers(sell_offers, current_needs_consume*2)
+        sorted_buy_offers = group_offers_by_delivery_time(buy_offers)
+        sorted_sell_offers = group_offers_by_delivery_time(sell_offers)
 
-        # 受諾リストを作成
-        for partner in selected_partners_supply:
-            response[partner] = SAOResponse(
-                ResponseType.ACCEPT_OFFER, None
-            )
+        counter_buy_offer = {}
+        counter_sell_offer = {}
+
+        for step, offer_list in sorted_buy_offers.items():
+            remaining_offers = offer_list.copy()
+            buy_needs, _ = self.get_needs(step)
+            _, selected_partners = solve_knapsack_for_scml_offers(offer_list, buy_needs, "low")
+
+            for partner in selected_partners:
+                response[partner] = SAOResponse(
+                    ResponseType.ACCEPT_OFFER, None
+                )
+                remaining_offers.pop(partner)
             
-        for partner in selected_partners_consume:
-            response[partner] = SAOResponse(
-                ResponseType.ACCEPT_OFFER, None
-            )
+            counter_buy_offer |= remaining_offers
 
-        if not self.BETTER_COUNTER_ALL:
-            return response
+        for step, offer_list in sorted_sell_offers.items():
+            remaining_offers = offer_list.copy()
+            _, sell_needs = self.get_needs(step)
+            _, selected_partners = solve_knapsack_for_scml_offers(offer_list, sell_needs, "high")
 
-        # 改善されたカウンターオール
+            for partner in selected_partners:
+                response[partner] = SAOResponse(
+                    ResponseType.ACCEPT_OFFER, None
+                )
+                remaining_offers.pop(partner)
+            
+            counter_sell_offer |= remaining_offers
 
         #==================
         # 試験的実装！！リファクタリング必須！！
         #=================
-        response = {}
         # 相手から来たオファーに対しこちらの理想的な納期を設定
-        offers = self.assign_delivery_steps_by_knapsack(buy_offers, "buy_offer", self.awi.current_step)
+        offers_new_delivery_steps = self.assign_delivery_steps_by_knapsack(counter_buy_offer, "buy_offer", self.awi.current_step)
 
-        for partner, offer in offers.items():
-            if offer[TIME] == buy_offers[partner][TIME] and self.is_valid_price(partner, offer[UNIT_PRICE]):
-                response[partner] = SAOResponse(
-                    ResponseType.ACCEPT_OFFER, None
-                )
-            else:
-                new_offer = (
-                    offer[QUANTITY],
-                    offer[TIME],
-                    self.get_valid_price(partner)
-                )
-                response[partner] = SAOResponse(
-                    ResponseType.REJECT_OFFER, new_offer
-                )
+        for partner, offer in offers_new_delivery_steps.items():
+            new_offer = (
+                offer[QUANTITY],
+                offer[TIME],
+                self.get_valid_price(partner)
+            )
+            response[partner] = SAOResponse(
+                ResponseType.REJECT_OFFER, new_offer
+            )
                     
         # 売りオファー
-        offers = self.assign_delivery_steps_by_knapsack(sell_offers, "sell_offer", self.awi.current_step)
+        offers_new_delivery_steps = self.assign_delivery_steps_by_knapsack(counter_sell_offer, "sell_offer", self.awi.current_step)
 
-        for partner, offer in offers.items():
-            if offer[TIME] == sell_offers[partner][TIME] and self.is_valid_price(partner, offer[UNIT_PRICE]):
-                response[partner] = SAOResponse(
-                    ResponseType.ACCEPT_OFFER, None
-                )
-            else:
-                new_offer = (
-                    offer[QUANTITY],
-                    offer[TIME],
-                    self.get_valid_price(partner)
-                )
-                response[partner] = SAOResponse(
-                    ResponseType.REJECT_OFFER, new_offer
-                )
+        for partner, offer in offers_new_delivery_steps.items():
+            new_offer = (
+                offer[QUANTITY],
+                offer[TIME],
+                self.get_valid_price(partner)
+            )
+            response[partner] = SAOResponse(
+                ResponseType.REJECT_OFFER, new_offer
+            )
+
         return response
     
     def distribute_todays_needs(self, partners=None) -> dict[str, int]:
@@ -330,6 +336,7 @@ class AgeAgeAgent(BaseAgent):
                 + (awi.n_lines - awi.total_sales_at(step))
             )
         )
+
         # 売りたい数(何か間違いがありそう)
         sell_needs = int(
             max(
@@ -339,9 +346,9 @@ class AgeAgeAgent(BaseAgent):
             )
         )
 
-        if is_first_proposals and step in range(awi.current_step, awi.current_step+3):
-            buy_needs = buy_needs * 2
-            sell_needs = int(sell_needs * 1.5)
+        if is_first_proposals and step in range(awi.current_step, awi.current_step+2):
+            buy_needs = int(buy_needs * 1.5)
+            # sell_needs = int(sell_needs * 1.5)
 
         return buy_needs, sell_needs
         

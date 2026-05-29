@@ -9,3 +9,6 @@ PR6,ProactiveAgent,scml_agents.scml2025.standard.team_255.proactive_agent,scml_a
 LA7,LitaAgentP,scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_p,scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_p.LitaAgentP
 PO8,PonponAgent,scml_agents.scml2025.standard.team_255.myagent,scml_agents.scml2025.standard.team_255.myagent.PonponAgent
 OPT,OptimisticAgent,scml_agents.scml2025.standard.team_268.optimistic_agent,scml_agents.scml2025.standard.team_268.optimistic_agent.OptimisticAgent
+LAA,LitaAgentYS,scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_ys,scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_ys.LitaAgentYS
+ASB,AS0,scml_agents.scml2025.standard.team_atsunaga.as0,scml_agents.scml2025.standard.team_atsunaga.as0.AS0
+LAC,LitaAgentCIR,scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_cir,scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_cir.LitaAgentCIR

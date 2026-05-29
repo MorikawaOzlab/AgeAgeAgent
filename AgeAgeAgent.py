@@ -63,7 +63,27 @@ class AgeAgeAgent(BaseAgent):
         self.quantity_adjust = defaultdict(int)
         self.avg_buy_price = 0.0
         self.avg_sell_price = 0.0
-        
+
+    def step(self):
+        awi = self.awi
+        input_q = awi.current_exogenous_input_quantity
+        output_q = awi.current_exogenous_output_quantity
+        input_total_price = awi.current_exogenous_input_price
+        output_total_price = awi.current_exogenous_output_price
+
+        if input_q > 0:
+            input_unit_price = input_total_price / input_q
+            self.update_partner_avg_quantity("exogenous_input", input_q)
+            self.update_partner_avg_price(None, input_unit_price, True)
+            return
+
+        if output_q > 0:
+            output_unit_price = output_total_price / output_q
+            self.update_partner_avg_quantity("exogenous_output", output_q)
+            self.update_partner_avg_price(None, output_unit_price, True)
+            return
+            
+
     def on_negotiation_success(self, contract, mechanism):
         if self.BASE_AGENT_DISTRIBUTION:
             return 
@@ -95,7 +115,6 @@ class AgeAgeAgent(BaseAgent):
         # 平均取引価格の更新
         self.update_partner_avg_price(partner, unit_price)
 
-
     def on_negotiation_failure(self, partners, annotation, mechanism, state):
         # 契約が成立しなかった交渉相手の取引量の加重平均を減らす
         partner = next(p for p in partners if p != self.id)
@@ -104,18 +123,6 @@ class AgeAgeAgent(BaseAgent):
             1,
             current_quantity - self.AVG_DECREASE_ON_FAULT
         )
-
-
-    def before_step(self):
-        awi = self.awi
-        input_q = awi.current_exogenous_input_quantity
-        input_total_price = awi.current_exogenous_input_price
-
-        if input_q <= 0:
-            return
-            
-        input_unit_price = input_total_price / input_q
-        self.update_partner_avg_price(None, input_unit_price, True)
 
     def first_proposals(self):
         if self.BASE_AGENT_FIRST_PROPOSALS:
@@ -166,7 +173,8 @@ class AgeAgeAgent(BaseAgent):
         response = {}
         buy_offers = {}
         sell_offers = {}
-        
+        counter_buy_offers = {}
+        counter_sell_offers = {}
         # 買い契約と売り契約に仕分け
         for partner, offer in offers.items():
             # パートナーごとに適性価格を設定
@@ -174,14 +182,24 @@ class AgeAgeAgent(BaseAgent):
             # min_quantity = self.calculate_min_quantity(partner)
 
             # 適正価格よりも利益が出ない価格になっていた場合、修正してカウンターオファー
-
+            if not self.is_valid_price(partner, offer[UNIT_PRICE]):
+                new_offer = (
+                    offer[QUANTITY],
+                    offer[TIME],
+                    self.get_valid_price(partner)
+                )
+                
+                if partner in self.awi.my_suppliers:
+                    counter_buy_offers[partner] = new_offer
+                else:
+                    counter_sell_offers[partner] = new_offer
+                continue
 
             # 初期化
             response[partner] = SAOResponse(
                 ResponseType.END_NEGOTIATION, None
             )
             if partner in self.awi.my_suppliers:
-                price_issue = self.awi.current_input_issues[UNIT_PRICE]
                 buy_offers[partner] = offer
             else:
                 sell_offers[partner] = offer
@@ -189,9 +207,7 @@ class AgeAgeAgent(BaseAgent):
         sorted_buy_offers = group_offers_by_delivery_time(buy_offers)
         sorted_sell_offers = group_offers_by_delivery_time(sell_offers)
 
-        counter_buy_offer = {}
-        counter_sell_offer = {}
-
+        # 納期チェック
         for step, offer_list in sorted_buy_offers.items():
             remaining_offers = offer_list.copy()
             buy_needs, _ = self.get_needs(step)
@@ -203,7 +219,7 @@ class AgeAgeAgent(BaseAgent):
                 )
                 remaining_offers.pop(partner)
             
-            counter_buy_offer |= remaining_offers
+            counter_buy_offers |= remaining_offers
 
         for step, offer_list in sorted_sell_offers.items():
             remaining_offers = offer_list.copy()
@@ -216,13 +232,13 @@ class AgeAgeAgent(BaseAgent):
                 )
                 remaining_offers.pop(partner)
             
-            counter_sell_offer |= remaining_offers
+            counter_sell_offers |= remaining_offers
 
         #==================
         # 試験的実装！！リファクタリング必須！！
         #=================
         # 相手から来たオファーに対しこちらの理想的な納期を設定
-        offers_new_delivery_steps = self.assign_delivery_steps_by_knapsack(counter_buy_offer, "buy_offer", self.awi.current_step)
+        offers_new_delivery_steps = self.assign_delivery_steps_by_knapsack(counter_buy_offers, "buy_offer", self.awi.current_step)
 
         for partner, offer in offers_new_delivery_steps.items():
             new_offer = (
@@ -235,7 +251,7 @@ class AgeAgeAgent(BaseAgent):
             )
                     
         # 売りオファー
-        offers_new_delivery_steps = self.assign_delivery_steps_by_knapsack(counter_sell_offer, "sell_offer", self.awi.current_step)
+        offers_new_delivery_steps = self.assign_delivery_steps_by_knapsack(counter_sell_offers, "sell_offer", self.awi.current_step)
 
         for partner, offer in offers_new_delivery_steps.items():
             new_offer = (
@@ -323,17 +339,31 @@ class AgeAgeAgent(BaseAgent):
         awi = self.awi
         if step==None:
             step=awi.current_step
+        
+        avg_sell_quantity = 0
+        for partner, quantity in self.partner_weighted_avg_quantity.items():
+            if partner in awi.my_consumers:
+                avg_sell_quantity += quantity
+        avg_sell_quantity = max(
+            avg_sell_quantity / len(awi.my_consumers),
+            self.partner_weighted_avg_quantity["exogenous_output"]
+        )
 
+        # 仕入れたい数(inventory input高すぎて基本負数)
         buy_needs = int(
             max(
                 0,
-                awi.n_lines * 0.7
-                - self.awi.current_inventory_input
+                max(
+                    awi.n_lines * 0.7,
+                    avg_sell_quantity*1.1
+                )
+                - self.awi.current_inventory_input,
             )
         )
-        if step != awi.current_step:
+        if step >= awi.current_step+2:
             buy_needs = 0
 
+        # 売りたい数(何か間違いがありそう)
         sell_needs = int(
             max(
                 0,
@@ -342,9 +372,9 @@ class AgeAgeAgent(BaseAgent):
             )
         )
 
-        if is_first_proposals and step in range(awi.current_step, awi.current_step+1):
+        if is_first_proposals and step in range(awi.current_step, awi.current_step+2):
             buy_needs = int(buy_needs * 1.5)
-            sell_needs = int(sell_needs * 1.25)
+            # sell_needs = int(sell_needs * 1.5)
 
         return buy_needs, sell_needs
         
@@ -407,14 +437,26 @@ class AgeAgeAgent(BaseAgent):
 
         return False
     
+    # def get_valid_price(self, partner):
+    #     price_issue = self.get_price_issue(partner)
+
+    #     # 価格がMIN_PROFITの利益を確保できる値もしくはシステム上の上限or下限
+    #     if partner in self.awi.my_suppliers:
+    #         return max(price_issue.min_value, min(price_issue.max_value, int(self.avg_sell_price - self.MIN_PROFIT)))
+    #     else:
+    #         return min(price_issue.max_value, max(price_issue.min_value, int(self.avg_buy_price + self.MIN_PROFIT)))
+
     def get_valid_price(self, partner):
         price_issue = self.get_price_issue(partner)
+        market_prices = self.awi.trading_prices
 
-        # 価格がMIN_PROFITの利益を確保できる値もしくはシステム上の上限or下限
+        input_market_price = market_prices[self.awi.my_input_product]
+        output_market_price = market_prices[self.awi.my_output_product]
+
         if partner in self.awi.my_suppliers:
-            return max(price_issue.min_value, min(price_issue.max_value, int(self.avg_sell_price - self.MIN_PROFIT)))
+            return max(price_issue.min_value, min(price_issue.max_value, int(math.ceil(input_market_price * 1.0))))
         else:
-            return min(price_issue.max_value, max(price_issue.min_value, int(self.avg_buy_price + self.MIN_PROFIT)))
+            return min(price_issue.max_value, max(price_issue.min_value, int(math.ceil(output_market_price * 0.8))))
         
     def get_price_issue(self, partner):
         if partner in self.awi.my_suppliers:

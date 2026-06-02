@@ -250,6 +250,7 @@ class AgeAgeAgent(BaseAgent):
         offers_new_delivery_steps = self.assign_delivery_steps_by_knapsack(counter_sell_offers, "sell_offer", self.awi.current_step)
 
         for partner, offer in offers_new_delivery_steps.items():
+            state = states.get(partner)
             new_offer = (
                 offer[QUANTITY],
                 offer[TIME],
@@ -277,8 +278,27 @@ class AgeAgeAgent(BaseAgent):
         
         # 単純にこれまでの取引量の加重平均を取引量を返す
         response = {}
+        total_seller_weight = 0
+        total_buyer_weight = 0
+
+        buy_needs, sell_needs = self.get_needs(None, True)
+
         for partner in partners:
-            response[partner] = round(self.partner_weighted_avg_quantity[partner])
+            if partner in self.awi.my_suppliers:
+                total_seller_weight += self.partner_weighted_avg_quantity[partner]
+            else:
+                total_buyer_weight += self.partner_weighted_avg_quantity[partner]
+
+        for partner in partners:
+            if partner in self.awi.my_suppliers:
+                response[partner] = math.ceil(
+                    buy_needs * (self.partner_weighted_avg_quantity[partner] / total_seller_weight)
+                )
+            else:
+                response[partner] = math.ceil(
+                    sell_needs * (self.partner_weighted_avg_quantity[partner] / total_buyer_weight)
+                )
+
         return response
 
     def assign_delivery_steps_by_knapsack(self, offers, mode: str, step=0, is_first_proposals=False):
@@ -470,7 +490,7 @@ class AgeAgeAgent(BaseAgent):
             # return min(price_issue.max_value, max(price_issue.min_value, int(math.ceil(initial_price - round_decay))))
             # # return int(initial_price - round_decay)
 
-            return min(price_issue.max_value, max(price_issue.min_value, int(output_market_price * 0.80)))
+            return min(price_issue.max_value, max(price_issue.min_value, int(output_market_price * 0.85)))
         
     def get_price_issue(self, partner):
         if partner in self.awi.my_suppliers:

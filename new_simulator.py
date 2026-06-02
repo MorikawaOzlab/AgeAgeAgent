@@ -41,7 +41,8 @@ MAX_WORKERS = min(
 
 # この回数ごとに ProcessPoolExecutor を完全に作り直す
 # 10なら、10シミュレーションごとに worker プロセスが全終了する
-BATCH_SIZE = 55*2
+BATCH_SIZE = 155#55*2
+# BATCH_SIZE = 55*2
 
 BASE_SEED = 20260528
 
@@ -50,6 +51,7 @@ TARGET_AGENTS = ["AS0", "AgeAgeAgent"]
 N_PROCESSES = 3
 
 AGENT_PROCESSES = [0] * 4 + [1] * 5 + [2] * 5
+# AGENT_PROCESSES = [0] * 3 + [1] * 3 + [2] * 4 + [3] * 4
 
 # stats_df から見る比較項目
 # trading_price_ / sold_quantity_ / unit_price_ は market/product 別なので除外

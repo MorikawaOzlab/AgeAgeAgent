@@ -173,7 +173,7 @@ if __name__ == '__main__':
     tournament_types = [AgeAgeAgent] + random.sample(list(winners_2025), 7)
     results = anac2024_std(
         competitors=tournament_types,
-        n_configs=6, # number of different configurations to generate
+        n_configs=2, # number of different configurations to generate
         n_competitors_per_world=len(tournament_types),
         n_runs_per_world=4, # number of times to repeat every simulation (with agent assignment)
         n_steps=125, # number of days (simulation steps) per simulation 本番は50, 125, 200

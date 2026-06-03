@@ -107,7 +107,7 @@ def get_base_agent_types() -> list[type]:
         AgeAgeAgent,
         name_map_2025["XenoSotaAgent"],
         name_map_2024["PenguinAgent"],
-        name_map_2024["PriceTrendStdAgent"],
+        name_map_2025["PriceTrendStdAgent"],
         AgeAgeAgent,
         name_map_2025["AS0"],
         name_map_2024["AX"],

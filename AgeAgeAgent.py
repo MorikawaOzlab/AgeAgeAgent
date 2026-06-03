@@ -291,10 +291,18 @@ class AgeAgeAgent(BaseAgent):
 
         for partner in partners:
             if partner in self.awi.my_suppliers:
+                if total_seller_weight == 0:
+                    response[partner] = math.ceil(buy_needs / len(self.awi.my_suppliers))
+                    continue
+
                 response[partner] = math.ceil(
                     buy_needs * (self.partner_weighted_avg_quantity[partner] / total_seller_weight)
                 )
             else:
+                if total_buyer_weight == 0:
+                    response[partner] = math.ceil(buy_needs / len(self.awi.my_consumers))
+                    continue
+
                 response[partner] = math.ceil(
                     sell_needs * (self.partner_weighted_avg_quantity[partner] / total_buyer_weight)
                 )
@@ -370,17 +378,14 @@ class AgeAgeAgent(BaseAgent):
         # 仕入れたい数(inventory input高すぎて基本負数)
         buy_needs = int(
             max(
+                # 契約済み売り取引量 - 在庫 - 契約済み買い取引量 + 最大生産能力に対する不足分の50%
                 0,
-                max(
-                    awi.n_lines * 0.7,
-                    avg_sell_quantity*1.1
-                )
-                - self.awi.current_inventory_input,
+                awi.total_sales_at(step)
+                - awi.current_inventory_input
+                - awi.total_supplies_at(step)
+                + (awi.n_lines - awi.total_sales_at(step)) * 0.7
             )
         )
-
-        if step >= awi.current_step+2:
-            buy_needs = 0
 
         if is_first_proposals:
             buy_needs = int(buy_needs * 1.5)
@@ -448,7 +453,7 @@ class AgeAgeAgent(BaseAgent):
         """
         オファーの価格が、十分利益の出るものになっているか判定する。
         """
-        valid_price = self.get_valid_price(partner)
+        valid_price = self.get_valid_price(partner, 100)
 
         if partner in self.awi.my_suppliers:
             return price <= valid_price
@@ -479,18 +484,14 @@ class AgeAgeAgent(BaseAgent):
             max_price = int(math.ceil(input_market_price * 1.0))
 
             round_decay = (max_price - initial_price) / 3 * min(3, current_round)
-            # print(int(initial_price + round_decay))
-            return max(price_issue.min_value, min(price_issue.max_value, int(initial_price + round_decay)))
-            # return int(initial_price + round_decay)
+            return max(price_issue.min_value, min(price_issue.max_value, math.ceil(initial_price + round_decay)))
         else:
-            # initial_price = self.partner_weighted_avg_price[partner] * 1.1
-            # min_price = output_market_price * 0.8
-            # round_decay = (initial_price - min_price) / 3 * min(3, current_round)
-            # # print(int(initial_price - round_decay))
-            # return min(price_issue.max_value, max(price_issue.min_value, int(math.ceil(initial_price - round_decay))))
-            # # return int(initial_price - round_decay)
+            initial_price = self.partner_weighted_avg_price[partner] * 1.1
+            min_price = output_market_price * 0.85
+            round_decay = (initial_price - min_price) / 3 * min(3, current_round)
+            return min(price_issue.max_value, max(price_issue.min_value, math.ceil(initial_price - round_decay)))
 
-            return min(price_issue.max_value, max(price_issue.min_value, int(output_market_price * 0.85)))
+            # return min(price_issue.max_value, max(price_issue.min_value, int(output_market_price * 0.85)))
         
     def get_price_issue(self, partner):
         if partner in self.awi.my_suppliers:

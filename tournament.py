@@ -388,7 +388,7 @@ if __name__ == "__main__":
     candidate_agents = list(winners_2025) + list(winners_2024)
     candidate_agents = unique_agent_classes(candidate_agents)
 
-    tournament_types = [AgeAgeAgent] + random.sample(candidate_agents, 18) # max 18
+    tournament_types = [AgeAgeAgent] + random.sample(candidate_agents, 13) # max 18
 
     tournament_types, name_map = create_short_agent_alias_module(tournament_types)
 
@@ -404,7 +404,7 @@ if __name__ == "__main__":
         competitors=tournament_types,
         n_configs=5,
         n_competitors_per_world=len(tournament_types),
-        n_runs_per_world=3,
+        n_runs_per_world=5,
         n_steps=50,
         print_exceptions=True,
         verbose=False,

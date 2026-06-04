@@ -73,31 +73,6 @@ from scml_agents.scml2024.standard.team_atsunaga.S24s import S5s as _BaseAgent13
 class S5s(_BaseAgent13):
     pass
 
-from scml_agents.scml2025.standard.team_255.myagent import PonponAgent as _BaseAgent14
-
-class Pon(_BaseAgent14):
-    pass
-
-from scml_agents.scml2025.standard.team_268.katsudon_agent import KATSUDONAgent as _BaseAgent15
-
-class KAT(_BaseAgent15):
-    pass
-
-from scml_agents.scml2024.standard.team_193.matching_pennies import MatchingPennies as _BaseAgent16
-
-class Mat(_BaseAgent16):
-    pass
-
-from scml_agents.scml2025.standard.team_276.litaagent_std.litaagent_cir import LitaAgentCIR as _BaseAgent17
-
-class LIR(_BaseAgent17):
-    pass
-
-from scml_agents.scml2025.standard.team_253.master_sota_agent import XenoSotaAgent as _BaseAgent18
-
-class Xen(_BaseAgent18):
-    pass
-
 __all__ = [
     "Age",
     "LYS",
@@ -113,9 +88,4 @@ __all__ = [
     "Dog",
     "Pro",
     "S5s",
-    "Pon",
-    "KAT",
-    "Mat",
-    "LIR",
-    "Xen",
 ]

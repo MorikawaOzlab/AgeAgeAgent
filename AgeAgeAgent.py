@@ -68,13 +68,13 @@ class AgeAgeAgent(StdSyncAgent):
         if input_q > 0:
             input_unit_price = input_total_price / input_q
             self.update_partner_avg_quantity("exogenous_input", input_q)
-            self.update_partner_avg_price(None, input_unit_price, True)
+            self.update_partner_avg_price("exogenous_input", input_unit_price)
             return
 
         if output_q > 0:
             output_unit_price = output_total_price / output_q
             self.update_partner_avg_quantity("exogenous_output", output_q)
-            self.update_partner_avg_price(None, output_unit_price, True)
+            self.update_partner_avg_price("exogenous_output", output_unit_price)
             return
 
     def on_negotiation_success(self, contract, mechanism):
@@ -165,9 +165,12 @@ class AgeAgeAgent(StdSyncAgent):
         #選ばれたオファーと選ばれなかったオファーに分ける
         
         # 納期が近いオファー集合は慎重に受諾判断
-        for i in range(self.awi.current_step, self.awi.n_steps):
+        for i in range(self.awi.current_step, self.awi.current_step + 2):
             buy_offer_dict = sorted_buy_offers.get(i, {})
             sell_offer_dict = sorted_sell_offers.get(i, {})
+
+            if len(buy_offer_dict) == 0 and len(sell_offer_dict) == 0:
+                continue
 
             # 取引可能量を計算
             total_buy_offer_quantity = get_total_offer_quantity(buy_offer_dict)
@@ -189,10 +192,12 @@ class AgeAgeAgent(StdSyncAgent):
             input_q = self.awi.current_exogenous_input_quantity
             output_q = self.awi.current_exogenous_output_quantity
 
+            # 外生契約では、level2では大体取引量の平均くらいになるようにinputを増やしたい
+            # 外生契約では、level1ではinventory inputとinput_q, n_linesを比較して売れるようにしたい
             if input_q > 0:
-                target_quantity = input_q
+                target_quantity = min(max(self.awi.current_inventory_input, input_q), self.awi.n_lines)
             elif output_q > 0:
-                target_quantity = output_q
+                target_quantity = max(output_q, int(self.partner_weighted_avg_quantity["exogenous_output"]*1.1))
 
             target_accept_supply = max(
                 0,
@@ -231,6 +236,58 @@ class AgeAgeAgent(StdSyncAgent):
 
 
         # 納期が遠いオファーについては売り契約重視
+        for i in range(self.awi.current_step + 2, self.awi.n_steps):
+            buy_offer_dict = sorted_buy_offers.get(i, {})
+            sell_offer_dict = sorted_sell_offers.get(i, {})
+
+            if len(buy_offer_dict) == 0 and len(sell_offer_dict) == 0:
+                continue
+
+            # 取引可能量を計算
+            total_buy_offer_quantity = get_total_offer_quantity(buy_offer_dict)
+            total_sell_offer_quantity = get_total_offer_quantity(sell_offer_dict)
+
+            contract_supply = self.awi.total_supplies_at(i)
+            contract_sales = self.awi.total_sales_at(i)
+            offer_supply = total_buy_offer_quantity
+            offer_sales = total_sell_offer_quantity
+            inventory = self.awi.current_inventory_input
+
+            buy_target_quantity = (
+                contract_sales
+                + offer_sales
+                - contract_supply
+            )
+
+            sell_target_quantity = (
+                self.awi.n_lines
+                - contract_sales
+            )
+            
+            # ナップサックを解く
+            _, selected_supplier = solve_knapsack_for_scml_offers(buy_offer_dict, buy_target_quantity, "low")
+            _, selected_consumer = solve_knapsack_for_scml_offers(sell_offer_dict, sell_target_quantity, "high")
+
+            # 選ばれたオファーにレスポンスを設定
+            for partner in (selected_supplier + selected_consumer):
+                response[partner] = SAOResponse(
+                    ResponseType.ACCEPT_OFFER, None
+                )
+
+            # 選ばれていないオファー
+            remaining_buy_offers = buy_offer_dict.copy()
+
+            for partner in selected_supplier:
+                remaining_buy_offers.pop(partner, None)
+
+            remaining_sell_offers = sell_offer_dict.copy()
+            
+            for partner in selected_consumer:
+                remaining_sell_offers.pop(partner, None)
+
+            # 返す
+            counter_buy_offers |= remaining_buy_offers
+            counter_sell_offers |= remaining_sell_offers
 
         # counter offerをまとめる
         counter_buy_offers |= price_adjusted_buy_offers
@@ -327,7 +384,7 @@ class AgeAgeAgent(StdSyncAgent):
                 )
             else:
                 if total_buyer_weight == 0:
-                    response[partner] = math.ceil(buy_needs / len(self.awi.my_consumers))
+                    response[partner] = math.ceil(sell_needs / len(self.awi.my_consumers))
                     continue
 
                 response[partner] = math.ceil(
@@ -454,12 +511,12 @@ class AgeAgeAgent(StdSyncAgent):
                 else math.ceil(sell_needs / len(self.awi.my_consumers))
             )
     
-    def update_partner_avg_price(self, partner, price, is_exogenous = False):
+    def update_partner_avg_price(self, partner, price):
         self.partner_weighted_avg_price[partner] = (1 - self.PRICE_AVG_DISCOUNT_RATE) * self.partner_weighted_avg_price[partner] + self.PRICE_AVG_DISCOUNT_RATE * price
 
-        if partner in self.awi.my_suppliers or is_exogenous:
+        if partner in self.awi.my_suppliers or partner == "exogenous_input":
             self.avg_buy_price = (1 - self.PRICE_AVG_DISCOUNT_RATE) * self.avg_buy_price + self.PRICE_AVG_DISCOUNT_RATE * price
-        elif partner in self.awi.my_consumers or is_exogenous:
+        elif partner in self.awi.my_consumers or  partner == "exogenous_output":
             self.avg_sell_price = (1 - self.PRICE_AVG_DISCOUNT_RATE) * self.avg_sell_price + self.PRICE_AVG_DISCOUNT_RATE * price
         
     def init_partner_avg_price(self, partners) -> None:

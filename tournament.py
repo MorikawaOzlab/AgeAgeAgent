@@ -402,6 +402,7 @@ if __name__ == "__main__":
 
     results = anac2024_std(
         competitors=tournament_types,
+        # 途中で止まる(57%)
         n_configs=5,
         n_competitors_per_world=len(tournament_types),
         n_runs_per_world=5,

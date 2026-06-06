@@ -100,23 +100,28 @@ def get_base_agent_types() -> list[type]:
     name_map_2024 = {cls.__name__: cls for cls in all_agents_2024}
     name_map_2025 = {cls.__name__: cls for cls in all_agents_2025}
 
-    return [
-        name_map_2025["AS0"],
-        name_map_2025["KATSUDONAgent"],
-        name_map_2025["PriceTrendStdAgent"],
-        AgeAgeAgent,
-        name_map_2025["XenoSotaAgent"],
-        name_map_2024["PenguinAgent"],
-        name_map_2025["PriceTrendStdAgent"],
-        AgeAgeAgent,
-        name_map_2025["AS0"],
-        name_map_2024["AX"],
-        name_map_2024["MatchingPennies"],
-        name_map_2025["AS0"],
-        name_map_2024["CautiousStdAgent"],
-        AgeAgeAgent,
-    ]
+    # return [
+    #     name_map_2025["AS0"],
+    #     name_map_2025["KATSUDONAgent"],
+    #     name_map_2025["PriceTrendStdAgent"],
+    #     AgeAgeAgent,
+    #     name_map_2025["XenoSotaAgent"],
+    #     name_map_2024["PenguinAgent"],
+    #     name_map_2025["PriceTrendStdAgent"],
+    #     AgeAgeAgent,
+    #     name_map_2025["AS0"],
+    #     name_map_2024["AX"],
+    #     name_map_2024["MatchingPennies"],
+    #     name_map_2025["AS0"],
+    #     name_map_2024["CautiousStdAgent"],
+    #     AgeAgeAgent,
+    # ]
 
+    return [
+        AgeAgeAgent,
+        AgeAgeAgent,
+        name_map_2025["AS0"],
+    ] + random.sample(all_agents_2024 + all_agents_2025, 11)
 
 def get_shuffled_agent_types(seed: int) -> list[type]:
     rng = random.Random(seed)

@@ -142,8 +142,8 @@ if __name__ == '__main__':
         name_map_2025["KATSUDONAgent"], 
         # AS0_log,
         name_map_2025["PriceTrendStdAgent"], 
-        # name_map_2025["ProactiveAgent"], 
-        AgeAgeAgent, 
+        name_map_2025["ProactiveAgent"], 
+        # AgeAgeAgent, 
         name_map_2025["XenoSotaAgent"], 
         name_map_2024["PenguinAgent"], 
         name_map_2024["AX"], 
@@ -156,10 +156,11 @@ if __name__ == '__main__':
         name_map_2024["MatchingPennies"], 
         name_map_2025["AS0"], 
         name_map_2024["CautiousStdAgent"], 
-        AgeAgeAgent, 
-        # name_map_2025["AS0"],
+        # AgeAgeAgent, 
+        name_map_2025["AS0"],
         # name_map_2024["QuickDecisionAgent"], 
     ]
+
 
     #シミュレーション設定
     world = SCML2024StdWorld(

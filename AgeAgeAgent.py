@@ -41,6 +41,7 @@ class AgeAgeAgent(StdSyncAgent):
     # 初回提案の内容を一時的に保持するための変数
     partner_first_offer: dict[str, tuple[int, int, int]] 
     quantity_adjust: dict[str, int]
+    partner_negotiation_counts: dict[str, tuple[int, int]]
 
     exo_input_q: int
     exo_output_q: int
@@ -140,7 +141,6 @@ class AgeAgeAgent(StdSyncAgent):
         response |= self.assign_delivery_steps_by_knapsack(buy_offers, "buy_offer", self.awi.current_step, True)
         response |= self.assign_delivery_steps_by_knapsack(sell_offers, "sell_offer", self.awi.current_step, True)
 
-        # print("ナップサックによって選ばれたオファー: ", response)
         return response 
 
     def counter_all(self, offers, states):
@@ -152,22 +152,22 @@ class AgeAgeAgent(StdSyncAgent):
             self.split_offers_by_partner(offers)
         )
 
-        # 価格のチェック
-        price_acceptable_buy_offers, price_adjusted_buy_offers = (
-            self.check_offer_price(buy_offers, states)
-        )
+        # # 価格のチェック
+        # price_acceptable_buy_offers, price_adjusted_buy_offers = (
+        #     self.check_offer_price(buy_offers, states)
+        # )
 
-        price_acceptable_sell_offers, price_adjusted_sell_offers = (
-            self.check_offer_price(sell_offers, states)
-        )
+        # price_acceptable_sell_offers, price_adjusted_sell_offers = (
+        #     self.check_offer_price(sell_offers, states)
+        # )
 
         # 納期ごとに必要な量の契約を結ぶ
-        offer_decition_result = self.select_offers_by_delivery_step(price_acceptable_buy_offers, price_acceptable_sell_offers)
+        offer_decition_result = self.select_offers_by_delivery_step(buy_offers, sell_offers)
 
         response |= offer_decition_result.accepted_responses
 
-        counter_buy_offers = price_adjusted_buy_offers | offer_decition_result.counter_buy_offers
-        counter_sell_offers = price_adjusted_sell_offers | offer_decition_result.counter_sell_offers
+        counter_buy_offers = offer_decition_result.counter_buy_offers
+        counter_sell_offers = offer_decition_result.counter_sell_offers
 
         # 余ったオファーにこちらの理想的な納期を設定
         response |= self.make_counter_responses_by_knapsack(counter_buy_offers, "buy_offer", states)
@@ -239,15 +239,15 @@ class AgeAgeAgent(StdSyncAgent):
         remaining_offers = offers.copy()
         needs: int
 
+        # 終了条件
+        if step > self.awi.n_steps-1:
+            return response
+
         if mode == "buy_offer":
             needs, _ = self.get_needs(step, is_first_proposals)
         elif mode == "sell_offer":
             _, needs = self.get_needs(step, is_first_proposals)
         else:
-            return response
-
-        # 終了条件
-        if step > self.awi.n_steps-1:
             return response
         
         # 動的計画法
@@ -268,16 +268,21 @@ class AgeAgeAgent(StdSyncAgent):
 
         return response
     
-    def select_offers_by_delivery_step(self, price_acceptable_buy_offers, price_acceptable_sell_offers):
+    def select_offers_by_delivery_step(self, buy_offers, sell_offers):
         result = OfferDecisionResult()
+
         # 納期ごとにオファーを分ける
-        sorted_buy_offers = group_offers_by_delivery_time(price_acceptable_buy_offers)
-        sorted_sell_offers = group_offers_by_delivery_time(price_acceptable_sell_offers)
+        sorted_buy_offers = group_offers_by_delivery_time(buy_offers)
+        sorted_sell_offers = group_offers_by_delivery_time(sell_offers)
         
         # 納期ごとにオファーの受諾判断
         for i in range(self.awi.current_step, self.awi.n_steps):
             buy_offer_dict = sorted_buy_offers.get(i, {})
             sell_offer_dict = sorted_sell_offers.get(i, {})
+
+            #===========
+            #価格チェック
+            #===========
 
             offer_decition_result = self.select_offers_at_step(buy_offer_dict, sell_offer_dict, step=i)
 
@@ -364,7 +369,7 @@ class AgeAgeAgent(StdSyncAgent):
 
             if input_q > 0:
                 target_quantity = min(
-                    max(inventory, input_q),
+                    (inventory + input_q),
                     self.awi.n_lines,
                 )
 
@@ -400,6 +405,7 @@ class AgeAgeAgent(StdSyncAgent):
                 0,
                 self.awi.n_lines - contract_sales,
             )
+
         return target_buy_quantity, target_sell_quantity
        
     def make_counter_responses_by_knapsack(

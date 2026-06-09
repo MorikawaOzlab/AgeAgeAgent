@@ -27,6 +27,7 @@ class OfferDecisionResult:
 class AgeAgeAgent(StdSyncAgent):
     QUANTITY_AVG_DISCOUNT_RATE = 0.2 # 取引量の加重平均の割引率
     PRICE_AVG_DISCOUNT_RATE = 0.2
+    AVG_CONCESSION_DISCOUNT_RATE = 0.2
     AVG_DECREASE_ON_FAULT = 0.5 # 取引に失敗したときに加重平均をどれくらい減らすか
 
     NEAR_DELIVERY_WINDOW = 2
@@ -38,10 +39,6 @@ class AgeAgeAgent(StdSyncAgent):
 
     partner_weighted_avg_quantity: dict[str, float]
     partner_weighted_avg_price: dict[str, float]
-    # 初回提案の内容を一時的に保持するための変数
-    partner_first_offer: dict[str, tuple[int, int, int]] 
-    quantity_adjust: dict[str, int]
-    partner_negotiation_counts: dict[str, tuple[int, int]]
 
     exo_input_q: int
     exo_output_q: int
@@ -49,14 +46,28 @@ class AgeAgeAgent(StdSyncAgent):
     def __init__(self, *args, threshold=None, ptoday=0.70, productivity=0.7, **kwargs):
         super().__init__(*args, **kwargs)
     
-        # 加重平均の計算を、negotiationsuccess, negotiation failture, counter allで行う
-        # ついでに交渉テーブルも作りたい
         self.partner_weighted_avg_quantity = defaultdict(float)
         self.partner_weighted_avg_price = defaultdict(float)
-        self.partner_first_offer = {}
-        self.quantity_adjust = defaultdict(int)
         self.avg_buy_price = 0.0
         self.avg_sell_price = 0.0
+
+        self.last_offers = {}
+
+        self.long_concession_avg = defaultdict(
+            lambda: {
+                QUANTITY: 0.0,
+                UNIT_PRICE: 0.0,
+            }
+        )
+
+        self.short_concession_avg = defaultdict(
+            lambda: {
+                QUANTITY: 0.0,
+                UNIT_PRICE: 0.0,
+            }
+        )
+
+        self.last_round_seen = defaultdict(lambda: -1)
 
     def step(self):
         awi = self.awi
@@ -144,6 +155,8 @@ class AgeAgeAgent(StdSyncAgent):
         return response 
 
     def counter_all(self, offers, states):
+        self.update_concession_stats(offers, states)
+
         response = defaultdict(
             lambda: SAOResponse(ResponseType.END_NEGOTIATION, None)
         )
@@ -277,6 +290,9 @@ class AgeAgeAgent(StdSyncAgent):
         
         # 納期ごとにオファーの受諾判断
         for i in range(self.awi.current_step, self.awi.n_steps):
+            # 納期が遠いか近いかの処理を実装する
+            # 遠い場合は期待値を計算
+            # 近い場合は価格は最低限の判断基準で受諾
             buy_offer_dict = sorted_buy_offers.get(i, {})
             sell_offer_dict = sorted_sell_offers.get(i, {})
 
@@ -419,11 +435,23 @@ class AgeAgeAgent(StdSyncAgent):
 
         for partner, offer in offers_new_delivery_steps.items():
             state = states.get(partner)
-            new_offer = (
+
+            base_offer = (
                 offer[QUANTITY],
                 offer[TIME],
                 self.get_valid_price(partner, current_round=state.step)
             )
+
+            new_offer = self.make_adjusted_offer(
+                partner,
+                base_offer,
+                state.step,
+            )
+            # new_offer = (
+            #     offer[QUANTITY],
+            #     offer[TIME],
+            #     self.get_valid_price(partner, current_round=state.step)
+            # )
             response[partner] = SAOResponse(
                 ResponseType.REJECT_OFFER, new_offer
             )
@@ -500,7 +528,182 @@ class AgeAgeAgent(StdSyncAgent):
         )
 
         return buy_needs, sell_needs
-        
+
+    def update_concession_stats(self, offers, states):
+        alpha = self.AVG_CONCESSION_DISCOUNT_RATE
+
+        for partner, offer in offers.items():
+            state = states.get(partner)
+            if state is None:
+                continue
+
+            current_round = state.step
+
+            # 新しい交渉が始まったら短期履歴をリセット
+            if current_round == 0:
+                self.short_concession_avg[partner] = {
+                    QUANTITY: 0.0,
+                    UNIT_PRICE: 0.0,
+                }
+                self.last_offers[partner] = offer
+                self.last_round_seen[partner] = current_round
+                continue
+
+            self.last_round_seen[partner] = current_round
+
+            # 前回オファーがなければ保存だけ
+            if partner not in self.last_offers:
+                self.last_offers[partner] = offer
+                continue
+
+            last_offer = self.last_offers[partner]
+
+            for issue in (QUANTITY, UNIT_PRICE):
+                change = abs(offer[issue] - last_offer[issue])
+
+                # 長期平均譲歩量
+                self.long_concession_avg[partner][issue] = (
+                    (1 - alpha) * self.long_concession_avg[partner][issue]
+                    + alpha * change
+                )
+
+                # 短期平均譲歩量
+                self.short_concession_avg[partner][issue] = (
+                    (1 - alpha) * self.short_concession_avg[partner][issue]
+                    + alpha * change
+                )
+
+            self.last_offers[partner] = offer
+
+    def get_issue_range(self, partner, issue):
+        if issue == QUANTITY:
+            if partner in self.awi.my_suppliers:
+                issue_obj = self.awi.current_input_issues[QUANTITY]
+            else:
+                issue_obj = self.awi.current_output_issues[QUANTITY]
+
+        elif issue == UNIT_PRICE:
+            issue_obj = self.get_price_issue(partner)
+
+        else:
+            return 1.0
+
+        return max(1.0, issue_obj.max_value - issue_obj.min_value)
+
+    def calc_issue_weights(self, partner, current_round, max_round=20):
+        eps = 1e-9
+
+        long_scores = {}
+        short_scores = {}
+
+        for issue in (QUANTITY, UNIT_PRICE):
+            issue_range = self.get_issue_range(partner, issue)
+
+            long_scores[issue] = (
+                self.long_concession_avg[partner][issue]
+                / (issue_range + eps)
+            )
+
+            short_scores[issue] = (
+                self.short_concession_avg[partner][issue]
+                / (issue_range + eps)
+            )
+
+        long_sum = sum(long_scores.values()) + eps
+        short_sum = sum(short_scores.values()) + eps
+
+        w_long = {
+            issue: long_scores[issue] / long_sum
+            for issue in (QUANTITY, UNIT_PRICE)
+        }
+
+        w_short = {
+            issue: short_scores[issue] / short_sum
+            for issue in (QUANTITY, UNIT_PRICE)
+        }
+
+        if max_round <= 1:
+            rho = 1.0
+        else:
+            rho = current_round / max_round
+
+        rho = max(0.0, min(1.0, rho))
+
+        # μは必ず0〜1にする
+        mu_min = 0.5
+        mu_max = 0.8
+        k = 3.0
+
+        mu = mu_min + (mu_max - mu_min) * (
+            (1 - math.exp(-k * rho)) / (1 - math.exp(-k))
+        )
+
+        weights = {
+            issue: (1 - mu) * w_long[issue] + mu * w_short[issue]
+            for issue in (QUANTITY, UNIT_PRICE)
+        }
+
+        return weights
+
+    def make_adjusted_offer(self, partner, offer, current_round):
+        eps = 1e-9
+
+        q = offer[QUANTITY]
+        t = offer[TIME]
+        p = offer[UNIT_PRICE]
+
+        weights = self.calc_issue_weights(partner, current_round)
+
+        w_q = weights[QUANTITY]
+        w_p = weights[UNIT_PRICE]
+
+        # 期待値差。最初は簡単に固定値でもいい
+        # 本来は E_avg - E_i
+        expectation_gap = 1.0
+
+        # 成功確率 S
+        # 最初は仮で0.5にして、あとから相手ごとの成功率に置き換える
+        S = 0.5
+
+        # 平均利益 m
+        # 0以下だと量の調整が暴れるので下限を置く
+        m = max(1.0, abs(self.avg_sell_price - self.avg_buy_price))
+
+        # 価格調整
+        price_adjust = w_p * expectation_gap / (S * max(1, q) + eps)
+
+        if partner in self.awi.my_suppliers:
+            # 相手が売り手、自分が買い手 → 価格を下げたい
+            new_p = p - price_adjust
+        else:
+            # 相手が買い手、自分が売り手 → 価格を上げたい
+            new_p = p + price_adjust
+
+        # 量調整
+        quantity_adjust = w_q * expectation_gap / (S * m + 1.0)
+
+        new_q = q + quantity_adjust
+
+        # issue範囲に収める
+        if partner in self.awi.my_suppliers:
+            q_issue = self.awi.current_input_issues[QUANTITY]
+            p_issue = self.awi.current_input_issues[UNIT_PRICE]
+        else:
+            q_issue = self.awi.current_output_issues[QUANTITY]
+            p_issue = self.awi.current_output_issues[UNIT_PRICE]
+
+        new_q = int(round(new_q))
+        new_p = int(round(new_p))
+
+        new_q = max(q_issue.min_value, min(q_issue.max_value, new_q))
+        new_p = max(p_issue.min_value, min(p_issue.max_value, new_p))
+
+        return (
+            new_q,
+            t,
+            new_p,
+        )
+
     def init_partner_avg_quantity(self, partners) -> None:
         """
         交渉パートナーの取引量の初期値をセット

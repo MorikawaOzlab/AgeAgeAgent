@@ -41,7 +41,7 @@ MAX_WORKERS = min(
 
 # この回数ごとに ProcessPoolExecutor を完全に作り直す
 # 10なら、10シミュレーションごとに worker プロセスが全終了する
-BATCH_SIZE = 3000
+BATCH_SIZE = 300
 # BATCH_SIZE = 55*2
 
 BASE_SEED = 20260528
@@ -138,7 +138,7 @@ def get_base_agent_types() -> list[type]:
     agent_types = agent_types + agent_types
     random.shuffle(agent_types)
 
-    return 
+    return agent_types 
 
 def get_shuffled_agent_types(seed: int) -> list[type]:
     rng = random.Random(seed)

@@ -30,12 +30,14 @@ class AgeAgeAgent(StdSyncAgent):
     AVG_CONCESSION_DISCOUNT_RATE = 0.2
     AVG_DECREASE_ON_FAULT = 0.5 # 取引に失敗したときに加重平均をどれくらい減らすか
 
-    NEAR_DELIVERY_WINDOW = 2
+    NEAR_DELIVERY_WINDOW = 1
+    FAR_DELIVERY_WINDOW = 5
     
     MIN_PROFIT = -100
 
     avg_sell_price: float
     avg_buy_price: float
+    partner_avg_proposal_quantity: float
 
     partner_weighted_avg_quantity: dict[str, float]
     partner_weighted_avg_price: dict[str, float]
@@ -48,6 +50,7 @@ class AgeAgeAgent(StdSyncAgent):
     
         self.partner_weighted_avg_quantity = defaultdict(float)
         self.partner_weighted_avg_price = defaultdict(float)
+        self.partner_avg_proposal_quantity = defaultdict(float)
         self.avg_buy_price = 0.0
         self.avg_sell_price = 0.0
 
@@ -166,6 +169,17 @@ class AgeAgeAgent(StdSyncAgent):
             self.split_offers_by_partner(offers)
         )
 
+        for partner, offer in offers.items():
+            if self.partner_avg_proposal_quantity[partner] == 0:
+                self.partner_avg_proposal_quantity[partner] = offer[QUANTITY]
+                continue
+
+            rate = 0.2
+            self.partner_avg_proposal_quantity[partner] = (
+                (1 - rate) * self.partner_avg_proposal_quantity[partner]
+                 + rate * offer[QUANTITY]
+            )
+
         # 納期ごとに必要な量の契約を結ぶ
         offer_decition_result = self.select_offers_by_delivery_step(buy_offers, sell_offers, states)
 
@@ -192,33 +206,51 @@ class AgeAgeAgent(StdSyncAgent):
         total_seller_weight = 0
         total_buyer_weight = 0
 
-        buy_needs, sell_needs = self.get_needs(None, True)
+        buy_needs, sell_needs = self.get_needs(None)
 
-        # 全エージェントの平均取引量の合計を取得
         for partner in partners:
             if partner in self.awi.my_suppliers:
-                total_seller_weight += self.partner_weighted_avg_quantity[partner]
-            else:
-                total_buyer_weight += self.partner_weighted_avg_quantity[partner]
-
-        # 平均取引量で重みをつけて必要量を分配
-        for partner in partners:
-            if partner in self.awi.my_suppliers:
-                if total_seller_weight == 0:
-                    response[partner] = math.ceil(buy_needs / len(self.awi.my_suppliers))
-                    continue
-
-                response[partner] = math.ceil(
-                    buy_needs * (self.partner_weighted_avg_quantity[partner] / total_seller_weight)
+                response[partner] = min(
+                    max(
+                        math.ceil(self.partner_avg_proposal_quantity[partner]),
+                        math.ceil(buy_needs / len(self.awi.my_suppliers)),
+                    ),
+                    5
                 )
             else:
-                if total_buyer_weight == 0:
-                    response[partner] = math.ceil(sell_needs / len(self.awi.my_consumers))
-                    continue
-
-                response[partner] = math.ceil(
-                    sell_needs * (self.partner_weighted_avg_quantity[partner] / total_buyer_weight)
+                response[partner] = min(
+                    max(
+                        math.ceil(self.partner_avg_proposal_quantity[partner]),
+                        math.ceil(sell_needs / len(self.awi.my_consumers)),
+                    ),
+                    5
                 )
+
+        # # 全エージェントの平均取引量の合計を取得
+        # for partner in partners:
+        #     if partner in self.awi.my_suppliers:
+        #         total_seller_weight += self.partner_weighted_avg_quantity[partner]
+        #     else:
+        #         total_buyer_weight += self.partner_weighted_avg_quantity[partner]
+
+        # # 平均取引量で重みをつけて必要量を分配
+        # for partner in partners:
+        #     if partner in self.awi.my_suppliers:
+        #         if total_seller_weight == 0:
+        #             response[partner] = math.ceil(buy_needs / len(self.awi.my_suppliers))
+        #             continue
+
+        #         response[partner] = math.ceil(
+        #             buy_needs * (self.partner_weighted_avg_quantity[partner] / total_seller_weight)
+        #         )
+        #     else:
+        #         if total_buyer_weight == 0:
+        #             response[partner] = math.ceil(sell_needs / len(self.awi.my_consumers))
+        #             continue
+
+        #         response[partner] = math.ceil(
+        #             sell_needs * (self.partner_weighted_avg_quantity[partner] / total_buyer_weight)
+        #         )
 
         return response
 
@@ -249,9 +281,11 @@ class AgeAgeAgent(StdSyncAgent):
             return response
 
         if mode == "buy_offer":
-            needs, _ = self.get_needs(step, is_first_proposals)
+            needs, _ = self.get_needs(step)
         elif mode == "sell_offer":
-            _, needs = self.get_needs(step, is_first_proposals)
+            _, needs = self.get_needs(step)
+            if is_first_proposals:
+                needs = int(needs * 1.5)
         else:
             return response
         
@@ -318,7 +352,7 @@ class AgeAgeAgent(StdSyncAgent):
             if not (
                 self.awi.current_step
                 <= step
-                < self.awi.current_step + self.NEAR_DELIVERY_WINDOW
+                < self.awi.current_step + self.FAR_DELIVERY_WINDOW
             ):
                 break
 
@@ -334,7 +368,7 @@ class AgeAgeAgent(StdSyncAgent):
             if not (
                 self.awi.current_step
                 <= step
-                < self.awi.current_step + self.NEAR_DELIVERY_WINDOW
+                < self.awi.current_step + self.FAR_DELIVERY_WINDOW
             ):
                 break
 
@@ -351,7 +385,7 @@ class AgeAgeAgent(StdSyncAgent):
         # ===========
 
         for partner, offer in buy_offer_dict.items():
-            if not (self.awi.current_step + self.NEAR_DELIVERY_WINDOW <= step):
+            if not (self.awi.current_step + self.FAR_DELIVERY_WINDOW <= step):
                 break
 
             if len(self.awi.my_suppliers) == 0:
@@ -378,7 +412,7 @@ class AgeAgeAgent(StdSyncAgent):
                 )
 
         for partner, offer in sell_offer_dict.items():
-            if not (self.awi.current_step + self.NEAR_DELIVERY_WINDOW <= step):
+            if not (self.awi.current_step + self.FAR_DELIVERY_WINDOW <= step):
                 break
 
             if len(self.awi.my_consumers) == 0:
@@ -513,54 +547,76 @@ class AgeAgeAgent(StdSyncAgent):
             < self.awi.current_step + self.NEAR_DELIVERY_WINDOW
         )
 
-        if not is_near_delivery:
+        is_normal_delivery = (
+            self.awi.current_step + self.NEAR_DELIVERY_WINDOW
+            <= step
+            < self.awi.current_step + self.FAR_DELIVERY_WINDOW
+        )
+
+        if is_near_delivery:
+            
+            if input_q > 0 or self.partner_weighted_avg_quantity["exogenous_input"] > 0:
+                target_quantity = min(
+                    inventory + input_q,
+                    n_lines,
+                )
+                
+                return 0, target_quantity
+            
+            elif output_q > 0 or self.partner_weighted_avg_quantity["exogenous_output"] > 0:
+                target_quantity = min(
+                    max(
+                        output_q,
+                        int(self.awi.n_lines * 0.5),
+                    ),
+                    n_lines,
+                ) - inventory
+
+                return target_quantity, 0
+
+            target_quantity = min(
+                contract_sales + offer_sales,
+                contract_supply + offer_supply + inventory,
+                n_lines,
+            )
+
             target_buy_quantity = max(
                 0,
-                contract_sales + offer_sales - contract_supply,
+                target_quantity - contract_supply - inventory,
             )
 
             target_sell_quantity = max(
                 0,
-                n_lines - contract_sales,
+                target_quantity - contract_sales,
             )
 
             return target_buy_quantity, target_sell_quantity
+        
+        else:
+            if input_q > 0 or self.partner_weighted_avg_quantity["exogenous_input"] > 0:
+                target_quantity = int(self.awi.n_lines * 0.5)
+                
+                return 0, target_quantity
+            
+            elif output_q > 0 or self.partner_weighted_avg_quantity["exogenous_output"] > 0:
+                if inventory > self.awi.n_lines:
+                    target_quantity = 0
+                else:
+                    target_quantity = int(self.awi.n_lines * 0.5)
 
-        target_quantity = min(
-            contract_sales + offer_sales,
-            contract_supply + offer_supply + inventory,
-            n_lines,
-        )
-
-        if input_q > 0:
-            target_quantity = min(
-                max(
-                    inventory + input_q,
-                    int(self.partner_weighted_avg_quantity["exogenous_input"] * 1.1),
-                ),
-                n_lines,
+                return target_quantity, 0
+            
+            target_buy_quantity = max(
+                0,
+                contract_sales - contract_supply - inventory,
             )
 
-        elif output_q > 0:
-            target_quantity = min(
-                max(
-                    output_q,
-                    int(self.partner_weighted_avg_quantity["exogenous_output"] * 1.1),
-                ),
-                n_lines,
+            target_sell_quantity = max(
+                0,
+                self.awi.n_lines - contract_sales,
             )
 
-        target_buy_quantity = max(
-            0,
-            target_quantity - contract_supply - inventory,
-        )
-
-        target_sell_quantity = max(
-            0,
-            target_quantity - contract_sales,
-        )
-
-        return target_buy_quantity, target_sell_quantity
+            return target_buy_quantity, target_sell_quantity
        
     def make_counter_responses_by_knapsack(
             self, 
@@ -620,7 +676,7 @@ class AgeAgeAgent(StdSyncAgent):
 
         return price_acceptable_offers, price_adjusted_offers
         
-    def get_needs(self, step=None, is_first_proposals=False):
+    def get_needs(self, step=None):
         """
         当日の必要量を求めるメソッド
 
@@ -658,47 +714,36 @@ class AgeAgeAgent(StdSyncAgent):
             )
         )
 
-        # 外生契約がある場合だけ、target_quantity ベースで補正する
-        if input_q > 0:
-            target_quantity = min(
-                max(
+        is_near_delivery = (
+            self.awi.current_step
+            <= step
+            < self.awi.current_step + self.NEAR_DELIVERY_WINDOW
+        )
+
+        if is_near_delivery:
+            if input_q > 0 or self.partner_weighted_avg_quantity["exogenous_input"] > 0:
+                sell_needs = min(
                     inventory + input_q,
-                    int(self.partner_weighted_avg_quantity["exogenous_input"] * 1.1),
-                ),
-                n_lines,
-            )
-
-            buy_needs = max(
-                0,
-                target_quantity - contract_supply - inventory,
-            )
-
-            sell_needs = max(
-                0,
-                target_quantity - contract_sales,
-            )
-
-        elif output_q > 0:
-            target_quantity = min(
-                max(
-                    output_q,
-                    int(self.partner_weighted_avg_quantity["exogenous_output"] * 1.1),
-                ),
-                n_lines,
-            )
-
-            buy_needs = max(
-                0,
-                target_quantity - contract_supply - inventory,
-            )
-
-            sell_needs = max(
-                0,
-                target_quantity - contract_sales,
-            )
-
-        if is_first_proposals:
-            buy_needs = int(buy_needs * 1.5)
+                    n_lines,
+                )
+                
+            
+            elif output_q > 0 or self.partner_weighted_avg_quantity["exogenous_output"] > 0:
+                buy_needs = min(
+                    max(
+                        output_q,
+                        int(self.awi.n_lines * 0.5),
+                    ),
+                    n_lines,
+                ) - inventory
+        else:
+            if input_q > 0 or self.partner_weighted_avg_quantity["exogenous_input"] > 0:
+                sell_needs = int(self.awi.n_lines * 0.5)
+            elif output_q > 0 or self.partner_weighted_avg_quantity["exogenous_output"] > 0:
+                if inventory > self.awi.n_lines:
+                    buy_needs = 0
+                else:
+                    buy_needs = int(self.awi.n_lines * 0.5)
 
         return buy_needs, sell_needs
 
@@ -882,7 +927,8 @@ class AgeAgeAgent(StdSyncAgent):
         交渉パートナーの取引量の初期値をセット
         初期値は、必要量を人数で分割
         """
-        buy_needs, sell_needs = self.get_needs(0, True)
+        buy_needs, sell_needs = self.get_needs(0)
+        sell_needs = int(sell_needs * 1.5)
 
         for partner in partners:
             self.partner_weighted_avg_quantity[partner] = (
@@ -967,12 +1013,14 @@ class AgeAgeAgent(StdSyncAgent):
             max_price = int(math.ceil(input_market_price * 1.0))
 
             round_decay = (max_price - initial_price) / 3 * min(3, current_round)
-            return max(price_issue.min_value, min(price_issue.max_value, math.ceil(initial_price + round_decay)))
+            # return max(price_issue.min_value, min(price_issue.max_value, math.ceil(initial_price + round_decay)))
+            return max_price
         else:
             initial_price = self.partner_weighted_avg_price[partner] * 1.1
-            min_price = output_market_price * 0.85
+            min_price = output_market_price * 0.9   
             round_decay = (initial_price - min_price) / 3 * min(3, current_round)
-            return min(price_issue.max_value, max(price_issue.min_value, math.ceil(initial_price - round_decay)))
+            # return min(price_issue.max_value, max(price_issue.min_value, math.ceil(initial_price - round_decay)))
+            return min_price
 
             # return min(price_issue.max_value, max(price_issue.min_value, int(output_market_price * 0.85)))
         
@@ -1016,15 +1064,14 @@ class AgeAgeAgent(StdSyncAgent):
     def get_expected_value(self, partner):
         """
         相手ごとの期待値を計算する。
-        旧コードには success_rate が無いので、成功率は仮に 0.5 とする。
         """
-        success_rate = 0.5
+        success_rate = 0.3
 
         if hasattr(self, "success_rate"):
             try:
                 success_rate = self.success_rate[partner]
             except Exception:
-                success_rate = 0.5
+                success_rate = 0.3
 
         if partner in self.awi.my_suppliers:
             profit = (

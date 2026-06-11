@@ -98,10 +98,10 @@ def get_base_agent_types() -> list[type]:
         winners_only=True,
         as_class=True,
     )
-    all_agents_2023 = get_agents(
-        version=2023,
+    agents_2025 = get_agents(
+        version=2025,
         track="std",
-        winners_only=True,
+        winners_only=False,
         as_class=True,
     )
 
@@ -131,10 +131,10 @@ def get_base_agent_types() -> list[type]:
     #     name_map_2025["AS0"],
     # ] + random.sample(all_agents_2024 + all_agents_2025, 11)
     agent_types = [AgeAgeAgent] + list(all_agents_2024) + list(all_agents_2025)
-    agent_types = agent_types + agent_types
+    agent_types = agent_types + random.sample(list(agents_2025), 2)
     print(agent_types, len(agent_types))
 
-    return agent_types + agent_types
+    return agent_types
 
 def get_shuffled_agent_types(seed: int) -> list[type]:
     rng = random.Random(seed)

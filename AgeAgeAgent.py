@@ -68,6 +68,7 @@ class AgeAgeAgent(StdSyncAgent):
         )
 
         self.last_round_seen = defaultdict(lambda: -1)
+        self.last_ufun_extra_check = {}
 
     def step(self):
         awi = self.awi
@@ -166,7 +167,7 @@ class AgeAgeAgent(StdSyncAgent):
         )
 
         # 納期ごとに必要な量の契約を結ぶ
-        offer_decition_result = self.select_offers_by_delivery_step(buy_offers, sell_offers)
+        offer_decition_result = self.select_offers_by_delivery_step(buy_offers, sell_offers, states)
 
         response |= offer_decition_result.accepted_responses
 
@@ -272,7 +273,7 @@ class AgeAgeAgent(StdSyncAgent):
 
         return response
     
-    def select_offers_by_delivery_step(self, buy_offers, sell_offers):
+    def select_offers_by_delivery_step(self, buy_offers, sell_offers, states):
         result = OfferDecisionResult()
 
         # 納期ごとにオファーを分ける
@@ -281,17 +282,15 @@ class AgeAgeAgent(StdSyncAgent):
         
         # 納期ごとにオファーの受諾判断
         for i in range(self.awi.current_step, self.awi.n_steps):
-            # 納期が遠いか近いかの処理を実装する
-            # 遠い場合は期待値を計算
-            # 近い場合は価格は最低限の判断基準で受諾
             buy_offer_dict = sorted_buy_offers.get(i, {})
             sell_offer_dict = sorted_sell_offers.get(i, {})
 
-            #===========
-            #価格チェック
-            #===========
-
-            offer_decition_result = self.select_offers_at_step(buy_offer_dict, sell_offer_dict, step=i)
+            offer_decition_result = self.select_offers_at_step(
+                buy_offer_dict,
+                sell_offer_dict,
+                step=i,
+                states=states,
+            )
 
             result.accepted_responses |= offer_decition_result.accepted_responses
             result.counter_buy_offers |= offer_decition_result.counter_buy_offers
@@ -299,48 +298,185 @@ class AgeAgeAgent(StdSyncAgent):
             
         return result
     
-    def select_offers_at_step(self, buy_offer_dict, sell_offer_dict, step):
+    def select_offers_at_step(self, buy_offer_dict, sell_offer_dict, step, states):
         result = OfferDecisionResult()
+
+        buy_offers = buy_offer_dict.copy()
+        sell_offers = sell_offer_dict.copy()
+
+        counter_buy_offers = {}
+        counter_sell_offers = {}
 
         if len(buy_offer_dict) == 0 and len(sell_offer_dict) == 0:
             return result
 
+        # ===========
+        # 納期が近いときの最低利益価格チェック
+        # ===========
+
+        for partner, offer in buy_offer_dict.items():
+            if not (
+                self.awi.current_step
+                <= step
+                < self.awi.current_step + self.NEAR_DELIVERY_WINDOW
+            ):
+                break
+
+            if not self.is_min_profit_price(partner, offer[UNIT_PRICE]):
+                buy_offers.pop(partner, None)
+                counter_buy_offers[partner] = (
+                    offer[QUANTITY],
+                    offer[TIME],
+                    self.get_min_profit_price(partner),
+                )
+
+        for partner, offer in sell_offer_dict.items():
+            if not (
+                self.awi.current_step
+                <= step
+                < self.awi.current_step + self.NEAR_DELIVERY_WINDOW
+            ):
+                break
+
+            if not self.is_min_profit_price(partner, offer[UNIT_PRICE]):
+                sell_offers.pop(partner, None)
+                counter_sell_offers[partner] = (
+                    offer[QUANTITY],
+                    offer[TIME],
+                    self.get_min_profit_price(partner),
+                )
+
+        # ===========
+        # 納期が遠いときの期待値チェック
+        # ===========
+
+        for partner, offer in buy_offer_dict.items():
+            if not (self.awi.current_step + self.NEAR_DELIVERY_WINDOW <= step):
+                break
+
+            if len(self.awi.my_suppliers) == 0:
+                continue
+
+            total_expected_value = 0
+
+            for supplier in self.awi.my_suppliers:
+                total_expected_value += self.get_expected_value(supplier)
+
+            expected_value = self.get_expected_value(partner)
+            avg_expected_value = total_expected_value / len(self.awi.my_suppliers)
+
+            if expected_value < avg_expected_value:
+                buy_offers.pop(partner, None)
+
+                state = states.get(partner)
+                current_round = state.step if state is not None else 0
+
+                counter_buy_offers[partner] = self.make_adjusted_offer(
+                    partner,
+                    offer,
+                    current_round,
+                )
+
+        for partner, offer in sell_offer_dict.items():
+            if not (self.awi.current_step + self.NEAR_DELIVERY_WINDOW <= step):
+                break
+
+            if len(self.awi.my_consumers) == 0:
+                continue
+
+            total_expected_value = 0
+
+            for consumer in self.awi.my_consumers:
+                total_expected_value += self.get_expected_value(consumer)
+
+            expected_value = self.get_expected_value(partner)
+            avg_expected_value = total_expected_value / len(self.awi.my_consumers)
+
+            if expected_value < avg_expected_value:
+                sell_offers.pop(partner, None)
+
+                state = states.get(partner)
+                current_round = state.step if state is not None else 0
+
+                counter_sell_offers[partner] = self.make_adjusted_offer(
+                    partner,
+                    offer,
+                    current_round,
+                )
+
+        # ===========
         # 必要量計算
+        # ===========
+
         target_buy_quantity, target_sell_quantity = (
             self.calculate_target_quantities_at_step(
-                buy_offer_dict,
-                sell_offer_dict,
+                buy_offers,
+                sell_offers,
                 step,
             )
         )
 
-        # ナップサック
+        # ===========
+        # ナップサックで受諾候補を選ぶ
+        # ===========
+
         _, selected_supplier = solve_knapsack_for_scml_offers(
-            buy_offer_dict,
+            buy_offers,
             target_buy_quantity,
             "low",
         )
 
         _, selected_consumer = solve_knapsack_for_scml_offers(
-            sell_offer_dict,
+            sell_offers,
             target_sell_quantity,
             "high",
         )
 
-        # 応答を作成
-        for partner in selected_supplier + selected_consumer:
+        # ===========
+        # ナップサック後に、容量超過してでも追加受諾した方が得かを ufun で確認
+        # ===========
+
+        selected_supplier, selected_consumer = self.improve_selected_offers_by_ufun(
+            buy_offers,
+            sell_offers,
+            selected_supplier,
+            selected_consumer,
+            step,
+        )
+
+        # ===========
+        # ufun後の最終選択に基づいて、選ばれなかった相手をカウンター対象にする
+        # ===========
+
+        selected_supplier_set = set(selected_supplier)
+        selected_consumer_set = set(selected_consumer)
+
+        for partner, offer in buy_offers.items():
+            if partner not in selected_supplier_set:
+                counter_buy_offers[partner] = offer
+
+        for partner, offer in sell_offers.items():
+            if partner not in selected_consumer_set:
+                counter_sell_offers[partner] = offer
+
+        # ===========
+        # 受諾応答を作成
+        # ===========
+
+        for partner in selected_supplier:
             result.accepted_responses[partner] = SAOResponse(
                 ResponseType.ACCEPT_OFFER,
                 None,
             )
 
-        result.counter_buy_offers = buy_offer_dict.copy()
-        for partner in selected_supplier:
-            result.counter_buy_offers.pop(partner, None)
-
-        result.counter_sell_offers = sell_offer_dict.copy()
         for partner in selected_consumer:
-            result.counter_sell_offers.pop(partner, None)
+            result.accepted_responses[partner] = SAOResponse(
+                ResponseType.ACCEPT_OFFER,
+                None,
+            )
+
+        result.counter_buy_offers |= counter_buy_offers
+        result.counter_sell_offers |= counter_sell_offers
 
         return result
     
@@ -840,6 +976,227 @@ class AgeAgeAgent(StdSyncAgent):
 
             # return min(price_issue.max_value, max(price_issue.min_value, int(output_market_price * 0.85)))
         
+    def is_min_profit_price(self, partner, price):
+        """
+        オファーの価格が、最低利益を満たすものになっているか判定する。
+        """
+        min_profit_price = self.get_min_profit_price(partner)
+
+        if partner in self.awi.my_suppliers:
+            return price <= min_profit_price
+
+        if partner in self.awi.my_consumers:
+            return price >= min_profit_price
+
+        return False
+
+    def get_min_profit_price(self, partner):
+        """
+        MIN_PROFIT を確保できる最低限の価格を返す。
+        """
+        price_issue = self.get_price_issue(partner)
+
+        if partner in self.awi.my_suppliers:
+            return max(
+                price_issue.min_value,
+                min(
+                    price_issue.max_value,
+                    int(self.avg_sell_price - self.MIN_PROFIT),
+                ),
+            )
+        else:
+            return min(
+                price_issue.max_value,
+                max(
+                    price_issue.min_value,
+                    int(self.avg_buy_price + self.MIN_PROFIT),
+                ),
+            )
+
+    def get_expected_value(self, partner):
+        """
+        相手ごとの期待値を計算する。
+        旧コードには success_rate が無いので、成功率は仮に 0.5 とする。
+        """
+        success_rate = 0.5
+
+        if hasattr(self, "success_rate"):
+            try:
+                success_rate = self.success_rate[partner]
+            except Exception:
+                success_rate = 0.5
+
+        if partner in self.awi.my_suppliers:
+            profit = (
+                self.avg_sell_price
+                - self.partner_weighted_avg_price[partner]
+            )
+        else:
+            profit = (
+                self.partner_weighted_avg_price[partner]
+                - self.avg_buy_price
+            )
+
+        return (
+            success_rate
+            * profit
+            * self.partner_weighted_avg_quantity[partner]
+        )
+
+    def calc_ufun_info_from_partner_offers(self, selected_offers):
+        """
+        partner -> offer の辞書を self.ufun で評価する。
+        """
+        offers = tuple(selected_offers.values())
+        outputs = tuple(
+            partner in self.awi.my_consumers
+            for partner in selected_offers.keys()
+        )
+
+        return self.ufun.from_offers(
+            offers,
+            outputs,
+            return_info=True,
+            ignore_signed_contracts=False,
+        )
+
+    def make_selected_offer_dict(
+        self,
+        buy_offer_dict,
+        sell_offer_dict,
+        selected_supplier,
+        selected_consumer,
+    ):
+        selected_offers = {}
+
+        for partner in selected_supplier:
+            if partner in buy_offer_dict:
+                selected_offers[partner] = buy_offer_dict[partner]
+
+        for partner in selected_consumer:
+            if partner in sell_offer_dict:
+                selected_offers[partner] = sell_offer_dict[partner]
+
+        return selected_offers
+
+    def improve_selected_offers_by_ufun(
+        self,
+        buy_offer_dict,
+        sell_offer_dict,
+        selected_supplier,
+        selected_consumer,
+        step,
+    ):
+        """
+        ナップサックで選んだ集合に対して、
+        未選択オファーを1つだけ追加した場合の利益を self.ufun で比較する。
+
+        利益が改善するなら、最も利益が高くなる追加オファーを1つだけ採用する。
+        """
+
+        selected_supplier = list(selected_supplier)
+        selected_consumer = list(selected_consumer)
+
+        # self.ufun は基本的に現在 step 用。
+        # 未来納期の評価には使わない方が安全。
+        if step != self.awi.current_step:
+            return selected_supplier, selected_consumer
+
+        base_offers = self.make_selected_offer_dict(
+            buy_offer_dict,
+            sell_offer_dict,
+            selected_supplier,
+            selected_consumer,
+        )
+
+        base_info = self.calc_ufun_info_from_partner_offers(base_offers)
+        base_profit = base_info.utility
+
+        best_profit = base_profit
+        best_partner = None
+        best_side = None
+        best_info = base_info
+
+        candidate_logs = []
+        eps = 1e-6
+
+        # 未選択の買いオファーを1つ追加して評価
+        for partner, offer in buy_offer_dict.items():
+            if partner in selected_supplier:
+                continue
+
+            candidate_offers = base_offers.copy()
+            candidate_offers[partner] = offer
+
+            info = self.calc_ufun_info_from_partner_offers(candidate_offers)
+            profit = info.utility
+
+            candidate_logs.append({
+                "partner": partner,
+                "side": "buy",
+                "offer": offer,
+                "profit": profit,
+                "diff": profit - base_profit,
+                "shortfall": getattr(info, "shortfall_quantity", None),
+                "remaining": getattr(info, "remaining_quantity", None),
+            })
+
+            if profit > best_profit + eps:
+                best_profit = profit
+                best_partner = partner
+                best_side = "buy"
+                best_info = info
+
+        # 未選択の売りオファーを1つ追加して評価
+        for partner, offer in sell_offer_dict.items():
+            if partner in selected_consumer:
+                continue
+
+            candidate_offers = base_offers.copy()
+            candidate_offers[partner] = offer
+
+            info = self.calc_ufun_info_from_partner_offers(candidate_offers)
+            profit = info.utility
+
+            candidate_logs.append({
+                "partner": partner,
+                "side": "sell",
+                "offer": offer,
+                "profit": profit,
+                "diff": profit - base_profit,
+                "shortfall": getattr(info, "shortfall_quantity", None),
+                "remaining": getattr(info, "remaining_quantity", None),
+            })
+
+            if profit > best_profit + eps:
+                best_profit = profit
+                best_partner = partner
+                best_side = "sell"
+                best_info = info
+
+        self.last_ufun_extra_check = {
+            "step": step,
+            "base_profit": base_profit,
+            "base_shortfall": getattr(base_info, "shortfall_quantity", None),
+            "base_remaining": getattr(base_info, "remaining_quantity", None),
+            "best_partner": best_partner,
+            "best_side": best_side,
+            "best_profit": best_profit,
+            "best_diff": best_profit - base_profit,
+            "best_shortfall": getattr(best_info, "shortfall_quantity", None),
+            "best_remaining": getattr(best_info, "remaining_quantity", None),
+            "candidates": candidate_logs,
+        }
+
+        # 利益が改善するなら1つだけ追加採用
+        if best_partner is not None:
+            if best_side == "buy":
+                selected_supplier.append(best_partner)
+            elif best_side == "sell":
+                selected_consumer.append(best_partner)
+
+        return selected_supplier, selected_consumer
+
     def get_price_issue(self, partner):
         if partner in self.awi.my_suppliers:
             return self.awi.current_input_issues[UNIT_PRICE]

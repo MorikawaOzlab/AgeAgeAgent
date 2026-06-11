@@ -46,7 +46,9 @@ BATCH_SIZE = 3000
 
 BASE_SEED = 20260528
 
-TARGET_AGENTS = ["AS0", "AgeAgeAgent"]
+# None にすると、シミュレーションに参加した全エージェントを集計・表示する。
+# 例: ["AS0", "AgeAgeAgent"] に戻すと、その2種類だけ表示できる。
+TARGET_AGENTS: list[str] | None = None
 
 N_PROCESSES = 3
 
@@ -102,12 +104,6 @@ def get_base_agent_types() -> list[type]:
         winners_only=True,
         as_class=True,
     )
-    agents_2025 = get_agents(
-        version=2025,
-        track="std",
-        winners_only=False,
-        as_class=True,
-    )
 
     name_map_2024 = {cls.__name__: cls for cls in all_agents_2024}
     name_map_2025 = {cls.__name__: cls for cls in all_agents_2025}
@@ -134,11 +130,11 @@ def get_base_agent_types() -> list[type]:
     #     AgeAgeAgent,
     #     name_map_2025["AS0"],
     # ] + random.sample(all_agents_2024 + all_agents_2025, 11)
-    agent_types = [AgeAgeAgent] + list(all_agents_2024) + list(all_agents_2025) + random.sample(list(agents_2025), 4)
+    agent_types = [AgeAgeAgent] + list(all_agents_2024) + list(all_agents_2025)
     agent_types = agent_types + agent_types
-    random.shuffle(agent_types)
+    print(agent_types, len(agent_types))
 
-    return 
+    return agent_types + agent_types
 
 def get_shuffled_agent_types(seed: int) -> list[type]:
     rng = random.Random(seed)
@@ -147,16 +143,55 @@ def get_shuffled_agent_types(seed: int) -> list[type]:
     return types
 
 
-def normalize_target_type_name(type_name: Any) -> str | None:
-    text = str(type_name)
+def normalize_agent_type_name(type_name: Any) -> str | None:
+    """
+    agent class / class名文字列 / world.saved_contracts 内の seller_type, buyer_type を
+    表示用の短いエージェント名にそろえる。
+    """
+    if type_name is None:
+        return None
 
-    if text == "AS0" or text.endswith(".AS0") or ".as0.AS0" in text:
-        return "AS0"
+    if isinstance(type_name, type):
+        return type_name.__name__
 
-    if "AgeAgeAgent" in text:
-        return "AgeAgeAgent"
+    text = str(type_name).strip()
 
-    return None
+    if not text or text == "None":
+        return None
+
+    # "<class 'package.module.AgentName'>" 形式への対応
+    class_match = re.match(r"^<class ['\"](.+)['\"]>$", text)
+    if class_match:
+        text = class_match.group(1)
+
+    # "package.module.AgentName" 形式への対応
+    if "." in text:
+        text = text.split(".")[-1]
+
+    # 念のため、残った余計な記号を除去
+    text = text.strip("'\"> ")
+
+    return text or None
+
+
+def get_selected_agent_type_names(types: list[type]) -> list[str]:
+    """
+    今回のシミュレーションに参加しているエージェント型名を返す。
+    TARGET_AGENTS が None なら全員、リストならその対象だけ。
+    """
+    all_names = sorted(
+        {
+            name
+            for agent_type in types
+            if (name := normalize_agent_type_name(agent_type)) is not None
+        }
+    )
+
+    if TARGET_AGENTS is None:
+        return all_names
+
+    target_set = set(TARGET_AGENTS)
+    return [name for name in all_names if name in target_set]
 
 
 def extract_level(agent_name: str) -> int | None:
@@ -187,17 +222,13 @@ def infer_target_agent_ids_by_level(
     score_cols = get_prefix_columns(stats_df, "score_")
     score_suffixes = [get_suffix(col, "score_") for col in score_cols]
 
-    result: dict[str, dict[int, list[str]]] = {
-        agent_name: defaultdict(list)
-        for agent_name in TARGET_AGENTS
-    }
+    selected_names = set(get_selected_agent_type_names(types))
+    result: dict[str, dict[int, list[str]]] = defaultdict(lambda: defaultdict(list))
 
     for index, agent_type in enumerate(types):
-        target_name = normalize_target_type_name(
-            getattr(agent_type, "__name__", str(agent_type))
-        )
+        target_name = normalize_agent_type_name(agent_type)
 
-        if target_name is None:
+        if target_name is None or target_name not in selected_names:
             continue
 
         index_prefix = f"{index:02d}"
@@ -256,8 +287,10 @@ def make_stats_values(
 
     values = []
 
+    selected_agent_type_names = get_selected_agent_type_names(types)
+
     for prefix, title, unit in STATS_SPECS:
-        for agent_type in TARGET_AGENTS:
+        for agent_type in selected_agent_type_names:
             level_map = target_agent_ids_by_level.get(agent_type, {})
 
             for level, agent_ids in level_map.items():
@@ -420,6 +453,8 @@ def make_trade_summaries_from_world(
         contract_group_map[group_key]["unit_price_sum"] += unit_price
         contract_group_map[group_key]["trade_value_sum"] += trade_value
 
+    selected_agent_type_names = set(get_selected_agent_type_names(types))
+
     for _, row in contracts.iterrows():
         seller_name = str(row["seller_name"])
         buyer_name = str(row["buyer_name"])
@@ -427,15 +462,18 @@ def make_trade_summaries_from_world(
         seller_level = extract_level(seller_name)
         buyer_level = extract_level(buyer_name)
 
-        seller_target_type = normalize_target_type_name(row["seller_type"])
-        buyer_target_type = normalize_target_type_name(row["buyer_type"])
+        seller_target_type = normalize_agent_type_name(row["seller_type"])
+        buyer_target_type = normalize_agent_type_name(row["buyer_type"])
 
         quantity = float(row["quantity"])
         unit_price = float(row["unit_price"])
 
         # seller 側: sell
         # @2 -> BUYER の外部契約も含む
-        if seller_target_type in TARGET_AGENTS and seller_level is not None:
+        if (
+            seller_target_type in selected_agent_type_names
+            and seller_level is not None
+        ):
             add_trade(
                 agent_type=seller_target_type,
                 agent_name=seller_name,
@@ -447,7 +485,10 @@ def make_trade_summaries_from_world(
 
         # buyer 側: buy
         # SELLER -> @0 の外部契約も含む
-        if buyer_target_type in TARGET_AGENTS and buyer_level is not None:
+        if (
+            buyer_target_type in selected_agent_type_names
+            and buyer_level is not None
+        ):
             add_trade(
                 agent_type=buyer_target_type,
                 agent_name=buyer_name,
@@ -697,41 +738,42 @@ def print_stats_summary(
 ) -> None:
     rows = []
 
+    agent_types = sorted({agent_type for *_rest, agent_type in stats_acc.keys()})
+
     for level in range(N_PROCESSES):
         for _prefix, metric, unit in STATS_SPECS:
-            as0_key = (level, metric, unit, "AS0")
-            age_key = (level, metric, unit, "AgeAgeAgent")
+            for agent_type in agent_types:
+                key = (level, metric, unit, agent_type)
+                data = stats_acc.get(key, {"sum": 0.0, "count": 0.0})
 
-            as0_data = stats_acc.get(as0_key, {"sum": 0.0, "count": 0.0})
-            age_data = stats_acc.get(age_key, {"sum": 0.0, "count": 0.0})
+                mean = (
+                    data["sum"] / data["count"]
+                    if data["count"] > 0
+                    else np.nan
+                )
 
-            as0_mean = (
-                as0_data["sum"] / as0_data["count"]
-                if as0_data["count"] > 0
-                else np.nan
-            )
-            age_mean = (
-                age_data["sum"] / age_data["count"]
-                if age_data["count"] > 0
-                else np.nan
-            )
-
-            rows.append(
-                {
-                    "level": level,
-                    "metric": metric,
-                    "unit": unit,
-                    "AS0_mean": as0_mean,
-                    "AgeAgeAgent_mean": age_mean,
-                    "AgeAgeAgent - AS0": age_mean - as0_mean,
-                    "AS0_n": int(as0_data["count"]),
-                    "AgeAgeAgent_n": int(age_data["count"]),
-                }
-            )
+                rows.append(
+                    {
+                        "level": level,
+                        "metric": metric,
+                        "unit": unit,
+                        "agent_type": agent_type,
+                        "mean": mean,
+                        "n": int(data["count"]),
+                    }
+                )
 
     summary_df = pd.DataFrame(rows)
 
-    print("\n========== Stats Summary by Level ==========")
+    if not summary_df.empty:
+        metric_order = {metric: index for index, (_prefix, metric, _unit) in enumerate(STATS_SPECS)}
+        summary_df["_metric_order"] = summary_df["metric"].map(metric_order)
+        summary_df = summary_df.sort_values(
+            ["level", "_metric_order", "mean", "agent_type"],
+            ascending=[True, True, False, True],
+        ).drop(columns="_metric_order")
+
+    print("\n========== Stats Summary by Level and Agent ==========")
     print(f"Successful simulations: {successful_count}")
     print(summary_df.to_string(index=False))
 
@@ -748,9 +790,14 @@ def print_contract_summary(
 ) -> None:
     rows = []
 
+    agent_types = sorted(
+        {agent_type for _level, _side, agent_type in agent_run_acc.keys()}
+        | {agent_type for _level, _side, agent_type in contract_group_acc.keys()}
+    )
+
     for level in range(N_PROCESSES):
         for side in ["buy", "sell"]:
-            for agent_type in TARGET_AGENTS:
+            for agent_type in agent_types:
                 key = (level, side, agent_type)
 
                 agent_data = agent_run_acc.get(
@@ -842,7 +889,13 @@ def print_contract_summary(
 
     summary_df = pd.DataFrame(rows)
 
-    print("\n========== Contract Summary by Level and Side ==========")
+    if not summary_df.empty:
+        summary_df = summary_df.sort_values(
+            ["level", "side", "avg_trade_value_per_agent_run", "agent_type"],
+            ascending=[True, True, False, True],
+        )
+
+    print("\n========== Contract Summary by Level, Side, and Agent ==========")
     print("外部契約も含む。")
     print("契約数・数量・取引金額は 1エージェント・1シミュレーションあたりの平均。")
     print("side=buy  : buyer_name 側の契約。例 SELLER -> @0, @0 -> @1, @1 -> @2")

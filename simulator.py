@@ -16,12 +16,10 @@ from negmas import Contract, ResponseType, SAOResponse, SAOState
 pio.renderers.default = "browser"
 #!/usr/bin/env python
 
-import random
 from collections import defaultdict, deque
 
 from scml.oneshot.common import QUANTITY, TIME, UNIT_PRICE
 
-import random
 from collections import Counter, defaultdict
 from itertools import chain, combinations, repeat
 
@@ -130,43 +128,22 @@ def parquet_to_txt(file_names):
             
 if __name__ == '__main__':
     #エージェント取得
-    all_agents_2024 = get_agents(version=2024, track="std", winners_only=False, as_class=True)
-    all_agents_2025 = get_agents(version=2025, track="std", winners_only=False, as_class=True)
+    all_agents_2024 = get_agents(version=2024, track="std", winners_only=True, as_class=True)
+    all_agents_2025 = get_agents(version=2025, track="std", winners_only=True, as_class=True)
     print(all_agents_2024)
     name_map_2024 = {cls.__name__: cls for cls in all_agents_2024}
     name_map_2025 = {cls.__name__: cls for cls in all_agents_2025}
 
     #エージェントの担当工場を変更する場合、typesのエージェントの順番を変える
-    types = [
-        name_map_2025["AS0"],
-        name_map_2025["KATSUDONAgent"], 
-        # AS0_log,
-        name_map_2025["PriceTrendStdAgent"], 
-        # name_map_2025["ProactiveAgent"], 
-        AgeAgeAgent, 
-        name_map_2025["XenoSotaAgent"], 
-        name_map_2024["PenguinAgent"], 
-        name_map_2024["AX"], 
-        AgeAgeAgent, 
-        name_map_2025["AS0"],
-        # name_map_2025["OptimisticAgent"], 
-        # name_map_2024["Group2"], 
-        name_map_2024["AX"], 
-        # name_map_2024["DogAgent"], 
-        name_map_2024["MatchingPennies"], 
-        name_map_2025["AS0"], 
-        name_map_2024["CautiousStdAgent"], 
-        AgeAgeAgent, 
-        # name_map_2025["AS0"],
-        # name_map_2024["QuickDecisionAgent"], 
-    ]
-
+    types = [AgeAgeAgent] + list(all_agents_2024) + list(all_agents_2025)
+    types = types + types
+    random.shuffle(types)
 
     #シミュレーション設定
     world = SCML2024StdWorld(
         **SCML2024StdWorld.generate(
             agent_types = types,
-            agent_processes=[0]*4 + [1]*5 + [2]*5,
+            # agent_processes=[0]*4 + [1]*5 + [2]*5,
             n_processes=3,
             n_steps=50,
             construct_graphs=True,

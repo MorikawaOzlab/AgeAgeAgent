@@ -1054,14 +1054,14 @@ class AgeAgeAgent(StdSyncAgent):
         
         avg_success_rate = total_success_rate / len(self.awi.my_suppliers) if partner in self.awi.my_suppliers else total_success_rate / len(self.awi.my_consumers)
         max_partner_bonus = 6
-        max_market_bonus = 6
+        max_market_bonus = 3
 
         partner_score = max_partner_bonus * (self.success_rate[partner] - 0.4) * 2
 
         market_score = 0
 
         if partner in self.awi.my_suppliers:
-            market_score = max(0, max_market_bonus * avg_success_rate - 0.2)
+            market_score = max(0, max_market_bonus * (avg_success_rate - 0.2) * 2)
 
         if partner in self.awi.my_suppliers:
             price = self.partner_weighted_avg_price[partner] - partner_score - market_score
@@ -1328,7 +1328,7 @@ class AgeAgeAgent(StdSyncAgent):
         k = 3.0
 
         denominator = max(1, self.awi.n_steps - self.awi.current_step)
-        rho = step - self.awi.current_step / denominator
+        rho = (step - self.awi.current_step) / denominator
         rho = max(0.0, min(1.0, rho))
 
         mu = mu_min + (mu_max - mu_min) * (

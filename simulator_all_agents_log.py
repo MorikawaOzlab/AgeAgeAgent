@@ -131,8 +131,9 @@ def get_base_agent_types() -> list[type]:
     #     name_map_2025["AS0"],
     # ] + random.sample(all_agents_2024 + all_agents_2025, 11)
     agent_types = [AgeAgeAgent] + list(all_agents_2024) + list(all_agents_2025)
+    agent_types = agent_types + agent_types
     # agent_types = agent_types + random.sample(list(agents_2025), 2)
-    print(agent_types, len(agent_types))
+    # print(agent_types, len(agent_types))
 
     return agent_types
 

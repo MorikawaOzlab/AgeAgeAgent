@@ -131,7 +131,7 @@ def get_base_agent_types() -> list[type]:
     #     name_map_2025["AS0"],
     # ] + random.sample(all_agents_2024 + all_agents_2025, 11)
     agent_types = [AgeAgeAgent] + list(all_agents_2024) + list(all_agents_2025)
-    agent_types = agent_types + random.sample(list(agents_2025), 2)
+    # agent_types = agent_types + random.sample(list(agents_2025), 2)
     print(agent_types, len(agent_types))
 
     return agent_types
@@ -211,6 +211,148 @@ def get_suffix(col: str, prefix: str) -> str:
     return str(col)[len(prefix):]
 
 
+
+def get_attr_value(obj: Any, names: list[str]) -> Any:
+    """
+    SCML のバージョン差を吸収するために、候補名から値を取る。
+    """
+    for name in names:
+        if hasattr(obj, name):
+            value = getattr(obj, name)
+            if value is not None:
+                return value
+    return None
+
+
+def get_agent_id_from_object(agent: Any) -> str | None:
+    """
+    world.agents の値が agent オブジェクトだった場合に、実際の agent id/name を取る。
+    """
+    value = get_attr_value(agent, ["id", "name", "agent_id", "aid"])
+
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    return text or None
+
+
+def add_agent_type_mapping(
+    mapping: dict[str, str],
+    agent_id: Any,
+    agent_type: Any,
+) -> None:
+    """
+    agent_id -> agent_type_name の対応を追加する。
+    """
+    if agent_id is None or agent_type is None:
+        return
+
+    agent_id_text = str(agent_id).strip()
+    agent_type_name = normalize_agent_type_name(agent_type)
+
+    if not agent_id_text or agent_type_name is None:
+        return
+
+    mapping[agent_id_text] = agent_type_name
+
+
+def update_agent_type_mapping_from_agents_attr(
+    mapping: dict[str, str],
+    agents: Any,
+) -> None:
+    """
+    world.agents / world._agents などから agent_id -> type_name を作る。
+    dict/list の両方に対応する。
+    """
+    if agents is None:
+        return
+
+    if isinstance(agents, dict):
+        for key, agent in agents.items():
+            # key が agent id になっているケース
+            add_agent_type_mapping(mapping, key, agent.__class__)
+
+            # agent オブジェクト自身が id/name を持っているケース
+            agent_id = get_agent_id_from_object(agent)
+            add_agent_type_mapping(mapping, agent_id, agent.__class__)
+        return
+
+    if isinstance(agents, (list, tuple, set)):
+        for agent in agents:
+            agent_id = get_agent_id_from_object(agent)
+            add_agent_type_mapping(mapping, agent_id, agent.__class__)
+
+
+def update_agent_type_mapping_from_agent_types_attr(
+    mapping: dict[str, str],
+    agent_types: Any,
+) -> None:
+    """
+    world.agent_types / world._agent_types が dict の場合への保険。
+    """
+    if agent_types is None:
+        return
+
+    if isinstance(agent_types, dict):
+        for key, agent_type in agent_types.items():
+            add_agent_type_mapping(mapping, key, agent_type)
+
+
+def update_agent_type_mapping_from_contracts(
+    mapping: dict[str, str],
+    world: Any,
+) -> None:
+    """
+    saved_contracts から agent_id -> type_name を補完する。
+    契約したエージェントだけだが、Level2 が stats 側で拾えない問題の保険になる。
+    """
+    contracts = getattr(world, "saved_contracts", None)
+
+    if not contracts:
+        return
+
+    for contract in contracts:
+        if isinstance(contract, dict):
+            seller_name = contract.get("seller_name")
+            seller_type = contract.get("seller_type")
+            buyer_name = contract.get("buyer_name")
+            buyer_type = contract.get("buyer_type")
+        else:
+            seller_name = getattr(contract, "seller_name", None)
+            seller_type = getattr(contract, "seller_type", None)
+            buyer_name = getattr(contract, "buyer_name", None)
+            buyer_type = getattr(contract, "buyer_type", None)
+
+        add_agent_type_mapping(mapping, seller_name, seller_type)
+        add_agent_type_mapping(mapping, buyer_name, buyer_type)
+
+
+def build_agent_type_name_by_id(world: Any) -> dict[str, str]:
+    """
+    実際に world に生成された agent_id -> agent_type_name の対応を作る。
+
+    これを使うことで、types の index と stats_df の列名が一致するという仮定を避ける。
+    """
+    mapping: dict[str, str] = {}
+
+    for attr_name in ["agents", "_agents"]:
+        update_agent_type_mapping_from_agents_attr(
+            mapping,
+            getattr(world, attr_name, None),
+        )
+
+    for attr_name in ["agent_types", "_agent_types"]:
+        update_agent_type_mapping_from_agent_types_attr(
+            mapping,
+            getattr(world, attr_name, None),
+        )
+
+    update_agent_type_mapping_from_contracts(mapping, world)
+
+    return mapping
+
+
 # =========================
 # stats_df 集計
 # =========================
@@ -218,13 +360,40 @@ def get_suffix(col: str, prefix: str) -> str:
 def infer_target_agent_ids_by_level(
     stats_df: pd.DataFrame,
     types: list[type],
+    agent_type_name_by_id: dict[str, str] | None = None,
 ) -> dict[str, dict[int, list[str]]]:
+    """
+    stats_df の score_ 列から、agent_type -> level -> agent_id を作る。
+
+    以前は types の index から agent_id の先頭番号を推定していたが、
+    world.generate() 側の配置とズレると Level2 などを拾えなくなる。
+    まず world から作った agent_id -> agent_type_name を使い、足りない分だけ旧方式で補完する。
+    """
     score_cols = get_prefix_columns(stats_df, "score_")
     score_suffixes = [get_suffix(col, "score_") for col in score_cols]
 
     selected_names = set(get_selected_agent_type_names(types))
     result: dict[str, dict[int, list[str]]] = defaultdict(lambda: defaultdict(list))
+    assigned_agent_ids: set[str] = set()
 
+    # 1. 実際の world から得た対応で集計する。
+    if agent_type_name_by_id:
+        for agent_id in score_suffixes:
+            target_name = agent_type_name_by_id.get(agent_id)
+
+            if target_name is None or target_name not in selected_names:
+                continue
+
+            level = extract_level(agent_id)
+
+            if level is None:
+                continue
+
+            result[target_name][level].append(agent_id)
+            assigned_agent_ids.add(agent_id)
+
+    # 2. world から型名を取れなかった列だけ、旧方式で補完する。
+    #    ただし、すでに対応付けできた agent_id は上書きしない。
     for index, agent_type in enumerate(types):
         target_name = normalize_agent_type_name(agent_type)
 
@@ -236,7 +405,7 @@ def infer_target_agent_ids_by_level(
         matched_agent_ids = [
             suffix
             for suffix in score_suffixes
-            if suffix.startswith(index_prefix)
+            if suffix not in assigned_agent_ids and suffix.startswith(index_prefix)
         ]
 
         for agent_id in matched_agent_ids:
@@ -246,6 +415,7 @@ def infer_target_agent_ids_by_level(
                 continue
 
             result[target_name][level].append(agent_id)
+            assigned_agent_ids.add(agent_id)
 
     return {
         agent_name: dict(level_map)
@@ -279,10 +449,12 @@ def mean_of_columns(stats_df: pd.DataFrame, cols: list[str]) -> float:
 def make_stats_values(
     stats_df: pd.DataFrame,
     types: list[type],
+    agent_type_name_by_id: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     target_agent_ids_by_level = infer_target_agent_ids_by_level(
         stats_df=stats_df,
         types=types,
+        agent_type_name_by_id=agent_type_name_by_id,
     )
 
     values = []
@@ -317,6 +489,7 @@ def make_agent_run_base(
     run_id: int,
     stats_df: pd.DataFrame,
     types: list[type],
+    agent_type_name_by_id: dict[str, str] | None = None,
 ) -> dict[tuple[int, str, str, str], dict[str, Any]]:
     """
     1エージェント個体 × 1run × side の基準行を作る。
@@ -325,6 +498,7 @@ def make_agent_run_base(
     target_agent_ids_by_level = infer_target_agent_ids_by_level(
         stats_df=stats_df,
         types=types,
+        agent_type_name_by_id=agent_type_name_by_id,
     )
 
     base = {}
@@ -371,10 +545,13 @@ def make_trade_summaries_from_world(
     生の契約一覧を親プロセスへ返さない。
     1シミュレーション内で必要な小さい集計だけ作って返す。
     """
+    agent_type_name_by_id = build_agent_type_name_by_id(world)
+
     agent_run_map = make_agent_run_base(
         run_id=run_id,
         stats_df=stats_df,
         types=types,
+        agent_type_name_by_id=agent_type_name_by_id,
     )
 
     contract_group_map: dict[tuple[int, str, str], dict[str, float]] = defaultdict(
@@ -559,9 +736,12 @@ def run_one_simulation(run_id: int, seed: int) -> dict[str, Any]:
 
         stats_df = world.stats_df
 
+        agent_type_name_by_id = build_agent_type_name_by_id(world)
+
         stats_values = make_stats_values(
             stats_df=stats_df,
             types=types,
+            agent_type_name_by_id=agent_type_name_by_id,
         )
 
         agent_run_rows, contract_group_rows = make_trade_summaries_from_world(

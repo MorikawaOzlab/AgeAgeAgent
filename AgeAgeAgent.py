@@ -45,12 +45,22 @@ class AgeAgeAgent(StdSyncAgent):
     exo_input_q: int
     exo_output_q: int
 
+    partner_history: dict[str, list[int]]
+    success_rate: dict[str, float]
+
     def __init__(self, *args, threshold=None, ptoday=0.70, productivity=0.7, **kwargs):
         super().__init__(*args, **kwargs)
     
         self.partner_weighted_avg_quantity = defaultdict(float)
         self.partner_weighted_avg_price = defaultdict(float)
         self.partner_avg_proposal_quantity = defaultdict(float)
+
+        # partner_history[partner] = [契約成功回数, 契約失敗回数]
+        self.partner_history = defaultdict(lambda: [0, 0])
+
+        # 履歴がない相手の初期成功率は 0.3 とする
+        self.success_rate = defaultdict(lambda: 0.7)
+
         self.avg_buy_price = 0.0
         self.avg_sell_price = 0.0
 
@@ -80,6 +90,7 @@ class AgeAgeAgent(StdSyncAgent):
             partners = self.negotiators.keys()
             self.init_partner_avg_quantity(partners)
             self.init_partner_avg_price(partners)
+            self.init_partner_history(partners)
 
         input_q = awi.current_exogenous_input_quantity
         output_q = awi.current_exogenous_output_quantity
@@ -112,6 +123,9 @@ class AgeAgeAgent(StdSyncAgent):
         # 平均取引価格の更新
         self.update_partner_avg_price(partner, unit_price)
 
+        # 成功回数と成功率の更新
+        self.update_partner_success_rate(partner, succeeded=True)
+
     def on_negotiation_failure(self, partners, annotation, mechanism, state):
         # 契約が成立しなかった交渉相手の取引量の加重平均を減らす
         partner = next(p for p in partners if p != self.id)
@@ -121,11 +135,22 @@ class AgeAgeAgent(StdSyncAgent):
             current_quantity - self.AVG_DECREASE_ON_FAULT
         )
 
+        # 失敗回数と成功率の更新
+        self.update_partner_success_rate(partner, succeeded=False)
+
     def first_proposals(self):
         offers = {}
         buy_offers = {}
         sell_offers = {}
         response = {}
+
+        suppliers_score = {}
+
+        # print(self.success_rate)
+        for step in range(self.awi.current_step, min(self.awi.n_steps, self.awi.current_step + 10)):
+            for partner in self.awi.my_suppliers:
+                suppliers_score[partner] = self.get_score(partner, step)
+                # print("step: ", step, partner, suppliers_score[partner])
 
         # 取引量を決定
         distribution = self.distribute_todays_needs()
@@ -169,6 +194,7 @@ class AgeAgeAgent(StdSyncAgent):
             self.split_offers_by_partner(offers)
         )
 
+        # 平均提案量更新
         for partner, offer in offers.items():
             if self.partner_avg_proposal_quantity[partner] == 0:
                 self.partner_avg_proposal_quantity[partner] = offer[QUANTITY]
@@ -641,11 +667,6 @@ class AgeAgeAgent(StdSyncAgent):
                 base_offer,
                 state.step,
             )
-            # new_offer = (
-            #     offer[QUANTITY],
-            #     offer[TIME],
-            #     self.get_valid_price(partner, current_round=state.step)
-            # )
             response[partner] = SAOResponse(
                 ResponseType.REJECT_OFFER, new_offer
             )
@@ -880,8 +901,8 @@ class AgeAgeAgent(StdSyncAgent):
         expectation_gap = 1.0
 
         # 成功確率 S
-        # 最初は仮で0.5にして、あとから相手ごとの成功率に置き換える
-        S = 0.5
+        # 0 だと調整量が大きくなりすぎるため、下限を置く
+        S = max(0.1, self.success_rate[partner])
 
         # 平均利益 m
         # 0以下だと量の調整が暴れるので下限を置く
@@ -1001,28 +1022,64 @@ class AgeAgeAgent(StdSyncAgent):
     #     else:
     #         return min(price_issue.max_value, max(price_issue.min_value, int(self.avg_buy_price + self.MIN_PROFIT)))
 
+    # def get_valid_price(self, partner, current_round=0):
+    #     price_issue = self.get_price_issue(partner)
+    #     market_prices = self.awi.trading_prices
+
+    #     input_market_price = market_prices[self.awi.my_input_product]
+    #     output_market_price = market_prices[self.awi.my_output_product]
+
+    #     if partner in self.awi.my_suppliers:
+    #         initial_price = self.partner_weighted_avg_price[partner] * 0.9 # supplier min priceに変更
+    #         max_price = int(math.ceil(input_market_price * 1.0))
+
+    #         round_decay = (max_price - initial_price) / 3 * min(3, current_round)
+    #         # return max(price_issue.min_value, min(price_issue.max_value, math.ceil(initial_price + round_decay)))
+    #         return max_price
+    #     else:
+    #         initial_price = self.partner_weighted_avg_price[partner] * 1.1
+    #         min_price = output_market_price * 0.9   
+    #         round_decay = (initial_price - min_price) / 3 * min(3, current_round)
+    #         # return min(price_issue.max_value, max(price_issue.min_value, math.ceil(initial_price - round_decay)))
+    #         return min_price
+
+    #         # return min(price_issue.max_value, max(price_issue.min_value, int(output_market_price * 0.85)))
+
     def get_valid_price(self, partner, current_round=0):
         price_issue = self.get_price_issue(partner)
-        market_prices = self.awi.trading_prices
 
-        input_market_price = market_prices[self.awi.my_input_product]
-        output_market_price = market_prices[self.awi.my_output_product]
+        total_success_rate = 0
+        for p in self.awi.my_suppliers if partner in self.awi.my_suppliers else self.awi.my_consumers:
+            total_success_rate += self.success_rate[p]
+        
+        avg_success_rate = total_success_rate / len(self.awi.my_suppliers) if partner in self.awi.my_suppliers else total_success_rate / len(self.awi.my_consumers)
+        max_partner_bonus = 6
+        max_market_bonus = 6
+
+        partner_score = max_partner_bonus * (self.success_rate[partner] - 0.4) * 2
+
+        market_score = 0
 
         if partner in self.awi.my_suppliers:
-            initial_price = self.partner_weighted_avg_price[partner] * 0.9 # supplier min priceに変更
-            max_price = int(math.ceil(input_market_price * 1.0))
+            market_score = max(0, max_market_bonus * avg_success_rate - 0.2)
 
-            round_decay = (max_price - initial_price) / 3 * min(3, current_round)
-            # return max(price_issue.min_value, min(price_issue.max_value, math.ceil(initial_price + round_decay)))
-            return max_price
+        if partner in self.awi.my_suppliers:
+            price = self.partner_weighted_avg_price[partner] - partner_score - market_score
         else:
-            initial_price = self.partner_weighted_avg_price[partner] * 1.1
-            min_price = output_market_price * 0.9   
-            round_decay = (initial_price - min_price) / 3 * min(3, current_round)
-            # return min(price_issue.max_value, max(price_issue.min_value, math.ceil(initial_price - round_decay)))
-            return min_price
+            price = self.partner_weighted_avg_price[partner] + partner_score + market_score
 
-            # return min(price_issue.max_value, max(price_issue.min_value, int(output_market_price * 0.85)))
+        price = min(price_issue.max_value, max(price_issue.min_value, round(price)))
+
+#         print(
+#             f"[level={self.awi.level}] partner={partner} | "
+#             f"avg_price={self.partner_weighted_avg_price[partner]:.2f} -> offer_price={price} | "
+#             f"market_score={market_score:.3f} | "
+#             f"avg_success={avg_success_rate:.3f} | "
+#             f"partner_score={partner_score:.3f} | "
+#             f"success_rate={self.success_rate[partner]:.3f}"
+# )
+
+        return price
         
     def is_min_profit_price(self, partner, price):
         """
@@ -1064,14 +1121,9 @@ class AgeAgeAgent(StdSyncAgent):
     def get_expected_value(self, partner):
         """
         相手ごとの期待値を計算する。
+        E_i = 成功率 × 1単位あたり利益 × 平均取引量
         """
-        success_rate = 0.3
-
-        if hasattr(self, "success_rate"):
-            try:
-                success_rate = self.success_rate[partner]
-            except Exception:
-                success_rate = 0.3
+        success_rate = self.success_rate[partner]
 
         if partner in self.awi.my_suppliers:
             profit = (
@@ -1269,6 +1321,58 @@ class AgeAgeAgent(StdSyncAgent):
                 continue
 
         return buy_offers, sell_offers
+    
+    def get_score(self, partner, step):
+        mu_min = 0.4
+        mu_max = 0.8
+        k = 3.0
+
+        denominator = max(1, self.awi.n_steps - self.awi.current_step)
+        rho = step - self.awi.current_step / denominator
+        rho = max(0.0, min(1.0, rho))
+
+        mu = mu_min + (mu_max - mu_min) * (
+            (1 - math.exp(-k * rho)) / (1 - math.exp(-k))
+        )
+
+        price_issue = self.get_price_issue(partner)
+
+        price = self.get_valid_price(partner, 0)
+        price_normalization = (price - price_issue.min_value) / (price_issue.max_value - price_issue.min_value)
+        success_rate = self.success_rate[partner]
+
+        # print(partner, price_normalization)
+
+        return mu * price_normalization + (1 - mu) * success_rate
+    
+
+    def init_partner_history(self, partners) -> None:
+        """
+        交渉相手ごとの成功・失敗回数と成功率を初期化する。
+        partner_history[partner] = [成功回数, 失敗回数]
+        """
+        for partner in partners:
+            _ = self.partner_history[partner]
+            _ = self.success_rate[partner]
+
+    def update_partner_success_rate(self, partner: str, succeeded: bool) -> None:
+        """
+        交渉結果に基づいて成功回数・失敗回数・成功率を更新する。
+        """
+        history = self.partner_history[partner]
+
+        if succeeded:
+            history[0] += 1
+        else:
+            history[1] += 1
+
+        success_count, failure_count = history
+        total_count = success_count + failure_count
+
+        if total_count == 0:
+            self.success_rate[partner] = 0.3
+        else:
+            self.success_rate[partner] = success_count / total_count
  
 def solve_knapsack_for_scml_offers(
     offers: dict[str, tuple[int, int, int]],

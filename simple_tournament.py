@@ -167,17 +167,17 @@ def shorten_names(results):
 if __name__ == '__main__':
     # 昨年の優勝エージェントを取得
     # 他の年のエージェントを入れる場合はversionを変更
-    winners_2025 = get_agents(version=2025, track="std", winners_only=False, as_class=True)
-    winners_2024 = get_agents(version=2024, track="std", winners_only=False, as_class=True)
+    winners_2025 = get_agents(version=2025, track="std", winners_only=True, as_class=True)
+    winners_2024 = get_agents(version=2024, track="std", winners_only=True, as_class=True)
 
     # tournament_types = [SimpleAgent, OptimisticAgent, AgeAgeAgent] + winners_2025 #random.sample(list(winners_2025), 8) #自分のエージェントクラスをここに追加して実行
-    tournament_types = [AgeAgeAgent] + random.sample(list(winners_2025 + winners_2024), 7)
+    tournament_types = [AgeAgeAgent] + list(winners_2024) + list(winners_2025) #random.sample(list(winners_2025 + winners_2024), 7)
     results = anac2024_std(
         competitors=tournament_types,
         n_configs=5, # number of different configurations to generate
         n_competitors_per_world=len(tournament_types),
-        n_runs_per_world=5, # number of times to repeat every simulation (with agent assignment)
-        n_steps=125, # number of days (simulation steps) per simulation 本番は50, 125, 200
+        n_runs_per_world=6, # number of times to repeat every simulation (with agent assignment)
+        n_steps=50, # number of days (simulation steps) per simulation 本番は50, 125, 200
         print_exceptions=True,
         verbose = False,
         tournament_path=r"C:\tmp\scml_t",

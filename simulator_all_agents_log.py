@@ -52,8 +52,8 @@ TARGET_AGENTS: list[str] | None = None
 
 N_PROCESSES = 3
 
-# AGENT_PROCESSES = [0] * 4 + [1] * 5 + [2] * 5
-# AGENT_PROCESSES = [0] * 3 + [1] * 3 + [2] * 4 + [3] * 4
+AGENT_PROCESSES = [0] * 5 + [1] * 6 + [2] * 6
+# AGENT_PROCESSES = None
 
 # stats_df から見る比較項目
 # trading_price_ / sold_quantity_ / unit_price_ は market/product 別なので除外
@@ -95,12 +95,6 @@ def get_base_agent_types() -> list[type]:
     all_agents_2025 = get_agents(
         version=2025,
         track="std",
-        winners_only=True,
-        as_class=True,
-    )
-    agents_2025 = get_agents(
-        version=2025,
-        track="std",
         winners_only=False,
         as_class=True,
     )
@@ -131,7 +125,8 @@ def get_base_agent_types() -> list[type]:
     #     name_map_2025["AS0"],
     # ] + random.sample(all_agents_2024 + all_agents_2025, 11)
     agent_types = [AgeAgeAgent] + list(all_agents_2024) + list(all_agents_2025)
-    agent_types = agent_types + agent_types
+    # agent_types = agent_types + agent_types
+
     # agent_types = agent_types + random.sample(list(agents_2025), 2)
     # print(agent_types, len(agent_types))
 
@@ -721,7 +716,7 @@ def run_one_simulation(run_id: int, seed: int) -> dict[str, Any]:
         world = SCML2024StdWorld(
             **SCML2024StdWorld.generate(
                 agent_types=types,
-                # agent_processes=AGENT_PROCESSES,
+                agent_processes=AGENT_PROCESSES,
                 n_processes=N_PROCESSES,
                 n_steps=N_STEPS,
                 construct_graphs=False,

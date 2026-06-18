@@ -13,7 +13,6 @@ from scml.std import *
 from dataclasses import dataclass, field
 from typing import Any
 
-
 __all__ = ["AgeAgeAgent"]
 
 @dataclass
@@ -156,9 +155,7 @@ class AgeAgeAgent(StdSyncAgent):
         # まずは当日の必要量を確認する
         buy_needs, sell_needs = self.get_needs(current_step)
 
-        # ==========
         # 当日分: スコア順に必要量を埋める
-        # ==========
         today_buy_offers, remaining_suppliers = self.make_today_offers_by_score(
             partners=remaining_suppliers,
             need=buy_needs,
@@ -174,9 +171,7 @@ class AgeAgeAgent(StdSyncAgent):
         response |= today_buy_offers
         response |= today_sell_offers
 
-        # ==========
         # 将来分: 当日に使わなかった相手をスコア基準ナップサックに回す
-        # ==========
         future_start_step = current_step + 1
 
         if future_start_step >= self.awi.n_steps:
@@ -431,9 +426,19 @@ class AgeAgeAgent(StdSyncAgent):
         counter_buy_offers = offer_decision_result.counter_buy_offers
         counter_sell_offers = offer_decision_result.counter_sell_offers
 
-        # 余ったオファーにこちらの理想的な納期を設定
-        response |= self.make_counter_responses_by_knapsack(counter_buy_offers, "buy_offer", states)
-        response |= self.make_counter_responses_by_knapsack(counter_sell_offers, "sell_offer", states)
+        # 未採用オファーは、元オファーの quantity / time / price を使わず、
+        # partner だけを使ってこちらの理想オファーを作り直す。
+        response |= self.make_counter_responses_by_score_fill(
+            counter_buy_offers,
+            "buy_offer",
+            states,
+        )
+
+        response |= self.make_counter_responses_by_score_fill(
+            counter_sell_offers,
+            "sell_offer",
+            states,
+        )
 
         return response
     
@@ -471,59 +476,6 @@ class AgeAgeAgent(StdSyncAgent):
 
         return response
 
-    def assign_delivery_steps_by_knapsack(
-            self, 
-            offers, 
-            mode: Literal["buy_offer", "sell_offer"],
-            step=0, 
-            is_first_proposals=False
-        ):
-        """
-        量と価格が決まっているオファーに対し、引数stepにおける必要量から動的計画法によって最適な納期を割り当てるメソッド
-        Args:
-            mode:
-                buy_offer: 買いオファー
-                sell_offer: 売りオファー
-        Returns:
-            offers
-        """
-
-        response = {}
-        price_mode = "low" if mode == "buy_offer" else "high"
-        remaining_offers = offers.copy()
-        needs: int
-
-        # 終了条件
-        if step > self.awi.n_steps-1:
-            return response
-
-        if mode == "buy_offer":
-            needs, _ = self.get_needs(step)
-        elif mode == "sell_offer":
-            _, needs = self.get_needs(step)
-            if is_first_proposals:
-                needs = int(needs * 1.5)
-        else:
-            return response
-        
-        # 動的計画法
-        _, selected_partners = solve_knapsack_for_scml_offers(offers, needs, price_mode)
-
-        for partner in selected_partners:
-            response[partner] = (
-                remaining_offers[partner][QUANTITY],
-                step,
-                remaining_offers[partner][UNIT_PRICE]
-            )
-
-            remaining_offers.pop(partner)
-
-        # このstepで使わないオファーは次のstepで使う
-        if len(remaining_offers) > 0:
-            response |= self.assign_delivery_steps_by_knapsack(remaining_offers, mode, step+1)
-
-        return response
-    
     def select_offers_by_delivery_step(self, buy_offers, sell_offers, states):
         result = OfferDecisionResult()
 
@@ -829,32 +781,81 @@ class AgeAgeAgent(StdSyncAgent):
 
             return target_buy_quantity, target_sell_quantity
        
-    def make_counter_responses_by_knapsack(
-            self, 
-            counter_offers, 
-            mode: Literal["buy_offer", "sell_offer"],
-            states
-        ):
+    def make_counter_responses_by_score_fill(
+        self,
+        counter_offers,
+        mode: Literal["buy_offer", "sell_offer"],
+        states,
+    ):
+        """
+        counter_all 用。
+
+        ナップサックで選ばれなかったオファーに対して、
+        元オファーの quantity / time / price は使わず、
+        partner だけを使ってこちらの理想オファーを作り直す。
+
+        方針:
+        1. 納期が近い step から順に見る。
+        2. その step の必要量を確認する。
+        3. get_score が高い相手から順に必要量を埋める。
+        4. 数量は get_avg_offer_quantity で作り直す。
+        5. 価格は get_valid_price で作り直す。
+        6. 最後に make_adjusted_offer で譲歩量を反映する。
+        """
         response = {}
-        offers_new_delivery_steps = self.assign_delivery_steps_by_knapsack(counter_offers, mode, self.awi.current_step)
 
-        for partner, offer in offers_new_delivery_steps.items():
-            state = states.get(partner)
+        if not counter_offers:
+            return response
 
-            base_offer = (
-                offer[QUANTITY],
-                offer[TIME],
-                self.get_valid_price(partner, current_round=state.step)
+        remaining_partners = list(counter_offers.keys())
+
+        for step in range(self.awi.current_step, self.awi.n_steps):
+            if not remaining_partners:
+                break
+
+            if mode == "buy_offer":
+                need, _ = self.get_needs(step)
+            elif mode == "sell_offer":
+                _, need = self.get_needs(step)
+            else:
+                return response
+
+            if need <= 0:
+                continue
+
+            # first_proposals と同じ考え方で、
+            # スコアが高い相手から必要量を埋める。
+            offers_at_step, remaining_partners = self.make_today_offers_by_score(
+                partners=remaining_partners,
+                need=need,
+                step=step,
             )
 
-            new_offer = self.make_adjusted_offer(
-                partner,
-                base_offer,
-                state.step,
-            )
-            response[partner] = SAOResponse(
-                ResponseType.REJECT_OFFER, new_offer
-            )
+            for partner, offer in offers_at_step.items():
+                state = states.get(partner)
+                current_round = state.step if state is not None else 0
+
+                # make_today_offers_by_score で作った数量・納期を使い、
+                # 価格は current_round 付きで作り直す。
+                base_offer = (
+                    offer[QUANTITY],
+                    offer[TIME],
+                    self.get_valid_price(
+                        partner,
+                        current_round=current_round,
+                    ),
+                )
+
+                new_offer = self.make_adjusted_offer(
+                    partner,
+                    base_offer,
+                    current_round,
+                )
+
+                response[partner] = SAOResponse(
+                    ResponseType.REJECT_OFFER,
+                    new_offer,
+                )
 
         return response
 

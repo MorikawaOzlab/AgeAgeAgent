@@ -134,8 +134,8 @@ def get_base_agent_types() -> list[type]:
     #     AgeAgeAgent,
     #     name_map_2025["AS0"],
     # ] + random.sample(all_agents_2024 + all_agents_2025, 11)
-    agent_types = [AgeAgeAgent] + list(all_agents_2024) + list(all_agents_2025) + random.sample(list(agents_2025), 4)
-    agent_types = agent_types + agent_types
+    agent_types = list(all_agents_2024) + list(all_agents_2025) + random.sample(list(agents_2025), 4)
+    agent_types = agent_types + [AgeAgeAgent] + agent_types
     random.shuffle(agent_types)
 
     return agent_types 

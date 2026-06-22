@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import random
 import time
 import webbrowser
 from collections import defaultdict
@@ -11,12 +10,12 @@ from typing import Any, ClassVar
 import matplotlib.pyplot as plt
 import pandas as pd
 import plotly.io as pio
-from negmas import ResponseType, SAOResponse
+from negmas import ResponseType
 from scml.oneshot.common import QUANTITY, TIME, UNIT_PRICE
 from scml.std import *
 from scml_agents import get_agents
 
-from AgeAgeAgent import AgeAgeAgent
+from AgeAgeAgentV2 import AgeAgeAgentV2
 from make_scml_log_viewer import generate_html_log
 
 pio.renderers.default = "browser"
@@ -26,7 +25,11 @@ pio.renderers.default = "browser"
 # 表示・保存用ユーティリティ
 # =========================
 
-def export_and_plot_stats(stats_df: pd.DataFrame, excel_path: str = "stats.xlsx", show=True) -> None:
+def export_and_plot_stats(
+    stats_df: pd.DataFrame,
+    excel_path: str = "stats.xlsx",
+    show=True,
+) -> None:
     """
     world.stats_df を
     1. Excel に保存
@@ -68,7 +71,14 @@ def export_and_plot_stats(stats_df: pd.DataFrame, excel_path: str = "stats.xlsx"
 
         for col in sorted(cols):
             label = col[len(prefix):]
-            ax.plot(x, stats_df[col], marker="o", linewidth=1.5, markersize=3, label=label)
+            ax.plot(
+                x,
+                stats_df[col],
+                marker="o",
+                linewidth=1.5,
+                markersize=3,
+                label=label,
+            )
 
         ax.set_title(title)
         ax.set_xlabel("step")
@@ -125,6 +135,7 @@ def parquet_to_txt(file_names):
 def _safe_offer_value(offer: Any, issue: int):
     if offer is None:
         return None
+
     try:
         return offer[issue]
     except Exception:
@@ -165,10 +176,20 @@ def print_records(title: str, records: list[dict[str, Any]]) -> None:
         round_no = r.get("round", "-")
         action = str(r.get("action", ""))[:16]
         offer = format_offer(r.get("offer"))
-        print(f"    {partner:<30} {side:<12} {str(round_no):<7} {action:<16} {offer}")
+
+        print(
+            f"    {partner:<30} "
+            f"{side:<12} "
+            f"{str(round_no):<7} "
+            f"{action:<16} "
+            f"{offer}"
+        )
 
 
-def print_ageage_logs_for_step(step: int, logs: dict[int, dict[str, dict[str, list[dict[str, Any]]]]]) -> None:
+def print_ageage_logs_for_step(
+    step: int,
+    logs: dict[int, dict[str, dict[str, list[dict[str, Any]]]]],
+) -> None:
     print("\n" + "=" * 110)
     print(f"AgeAgeAgent offer log | SCML step {step}")
     print("=" * 110)
@@ -183,6 +204,7 @@ def print_ageage_logs_for_step(step: int, logs: dict[int, dict[str, dict[str, li
         print(f"\n--- {agent_id} ---")
         print_records("過去に受諾済みの将来契約", log.get("accepted", []))
         print_records("来たオファー", log.get("incoming", []))
+        print_records("価格チェックで落ちたオファー", log.get("price_rejected", []))
         print_records("出したオファー", log.get("outgoing", []))
         print_records("応答", log.get("responses", []))
 
@@ -204,7 +226,7 @@ def ask_continue() -> bool:
         print("Enter または y で続行、q で終了できます。")
 
 
-class InspectableAgeAgeAgent(AgeAgeAgent):
+class InspectableAgeAgeAgent(AgeAgeAgentV2):
     """
     AgeAgeAgent の挙動は変えず、
     first_proposals / counter_all で見えたオファーだけを記録するデバッグ用クラス。
@@ -215,6 +237,7 @@ class InspectableAgeAgeAgent(AgeAgeAgent):
             lambda: {
                 "accepted": [],
                 "incoming": [],
+                "price_rejected": [],
                 "outgoing": [],
                 "responses": [],
             }
@@ -224,11 +247,20 @@ class InspectableAgeAgeAgent(AgeAgeAgent):
     def _my_side(self, partner: str) -> str:
         if partner in self.awi.my_suppliers:
             return "BUY/input"
+
         if partner in self.awi.my_consumers:
             return "SELL/output"
+
         return "UNKNOWN"
 
-    def _record(self, kind: str, partner: str, offer: Any, action: str, round_no: Any = "-") -> None:
+    def _record(
+        self,
+        kind: str,
+        partner: str,
+        offer: Any,
+        action: str,
+        round_no: Any = "-",
+    ) -> None:
         self._record_for_step(
             step=self.awi.current_step,
             kind=kind,
@@ -278,8 +310,17 @@ class InspectableAgeAgeAgent(AgeAgeAgent):
         return proposals
 
     def counter_all(self, offers, states):
-        # 相手から来た現在ラウンドのオファー
+        valid_offers = {}
+        price_rejected_offers = {}
+
+        # 価格チェックを通ったものだけ「来たオファー」に表示する
         for partner, offer in offers.items():
+            if self.is_min_profit_price(partner, offer[UNIT_PRICE]):
+                valid_offers[partner] = offer
+            else:
+                price_rejected_offers[partner] = offer
+
+        for partner, offer in valid_offers.items():
             state = states.get(partner)
             round_no = getattr(state, "step", "-") if state is not None else "-"
 
@@ -288,6 +329,19 @@ class InspectableAgeAgeAgent(AgeAgeAgent):
                 partner=partner,
                 offer=offer,
                 action="RECEIVED",
+                round_no=round_no,
+            )
+
+        # 価格チェックで落ちたものは別枠で表示する
+        for partner, offer in price_rejected_offers.items():
+            state = states.get(partner)
+            round_no = getattr(state, "step", "-") if state is not None else "-"
+
+            self._record(
+                kind="price_rejected",
+                partner=partner,
+                offer=offer,
+                action="PRICE_REJECTED",
                 round_no=round_no,
             )
 
@@ -302,9 +356,10 @@ class InspectableAgeAgeAgent(AgeAgeAgent):
             outcome = getattr(response, "outcome", None)
             action = response_name(response_type)
 
+            display_offer = outcome
+
             # ACCEPT_OFFER の response.outcome は None になるため、
             # 受諾した内容は、そのラウンドで相手から来た offers[partner] を表示する。
-            display_offer = outcome
             if response_type == ResponseType.ACCEPT_OFFER:
                 display_offer = offers.get(partner)
 
@@ -316,11 +371,7 @@ class InspectableAgeAgeAgent(AgeAgeAgent):
                 round_no=round_no,
             )
 
-            # 「受諾済み」として前に表示するのは、
-            # 今この step で受諾した当日契約ではなく、
-            # 過去 step で将来契約として受諾したものだけ。
-            # 例: step=3 で t=5 のオファーを ACCEPT したら、
-            # step 5 の [過去に受諾済みの将来契約] に表示する。
+            # 過去に受諾した将来契約を、納期 step 側にも表示する。
             if response_type == ResponseType.ACCEPT_OFFER:
                 delivery_step = _safe_offer_value(display_offer, TIME)
                 accepted_at_step = self.awi.current_step
@@ -357,8 +408,19 @@ class InspectableAgeAgeAgent(AgeAgeAgent):
 # =========================
 
 if __name__ == "__main__":
-    all_agents_2024 = get_agents(version=2024, track="std", winners_only=True, as_class=True)
-    all_agents_2025 = get_agents(version=2025, track="std", winners_only=True, as_class=True)
+    all_agents_2024 = get_agents(
+        version=2024,
+        track="std",
+        winners_only=True,
+        as_class=True,
+    )
+
+    all_agents_2025 = get_agents(
+        version=2025,
+        track="std",
+        winners_only=True,
+        as_class=True,
+    )
 
     print(all_agents_2024)
 
@@ -366,11 +428,10 @@ if __name__ == "__main__":
     name_map_2025 = {cls.__name__: cls for cls in all_agents_2025}
 
     # AgeAgeAgent の代わりに InspectableAgeAgeAgent を使う。
-    # 交渉ロジックは AgeAgeAgent のまま、ログだけ追加される。
+    # 交渉ロジックは AgeAgeAgentV2 のまま、ログだけ追加される。
     types = [InspectableAgeAgeAgent] + list(all_agents_2024) + list(all_agents_2025)
     types = types + types
 
-    # シミュレーション設定
     world = SCML2024StdWorld(
         **SCML2024StdWorld.generate(
             agent_types=types,
@@ -385,10 +446,11 @@ if __name__ == "__main__":
     world.init()
     total_time = 0.0
 
-    # シミュレーション実行
     for step in range(world.n_steps):
         start = time.perf_counter()
+
         world.step()
+
         elapsed = time.perf_counter() - start
         total_time += elapsed
 
@@ -400,21 +462,24 @@ if __name__ == "__main__":
             f"ETA: {format_time(eta)}"
         )
 
-        # この step で AgeAgeAgent に来たオファー / AgeAgeAgent が出したオファーを表示
-        print_ageage_logs_for_step(step, InspectableAgeAgeAgent.step_logs)
+        print_ageage_logs_for_step(
+            step,
+            InspectableAgeAgeAgent.step_logs,
+        )
 
-        # 最終 step でなければ、ユーザーの指示を待ってから次へ進む
         if step < world.n_steps - 1:
             if not ask_continue():
                 print("\n手動停止しました。ここまでの結果を保存します。")
                 break
 
-    parquet_to_txt([
-        "negs.parquet",
-        "actions.parquet",
-        "simsteps.parquet",
-        "agents.parquet",
-    ])
+    parquet_to_txt(
+        [
+            "negs.parquet",
+            "actions.parquet",
+            "simsteps.parquet",
+            "agents.parquet",
+        ]
+    )
 
     export_and_plot_stats(world.stats_df, "stats.xlsx", False)
 

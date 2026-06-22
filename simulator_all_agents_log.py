@@ -24,7 +24,7 @@ import pandas as pd
 from scml.std import *
 from scml_agents import get_agents
 
-from AgeAgeAgent import AgeAgeAgent
+from AgeAgeAgentV2 import AgeAgeAgentV2
 
 
 # =========================
@@ -95,7 +95,7 @@ def get_base_agent_types() -> list[type]:
     all_agents_2025 = get_agents(
         version=2025,
         track="std",
-        winners_only=False,
+        winners_only=True,
         as_class=True,
     )
 
@@ -124,8 +124,8 @@ def get_base_agent_types() -> list[type]:
     #     AgeAgeAgent,
     #     name_map_2025["AS0"],
     # ] + random.sample(all_agents_2024 + all_agents_2025, 11)
-    agent_types = [AgeAgeAgent] + list(all_agents_2024) + list(all_agents_2025)
-    # agent_types = agent_types + agent_types
+    agent_types = [AgeAgeAgentV2] + list(all_agents_2024) + list(all_agents_2025)
+    agent_types = agent_types + agent_types
 
     # agent_types = agent_types + random.sample(list(agents_2025), 2)
     # print(agent_types, len(agent_types))
@@ -716,7 +716,7 @@ def run_one_simulation(run_id: int, seed: int) -> dict[str, Any]:
         world = SCML2024StdWorld(
             **SCML2024StdWorld.generate(
                 agent_types=types,
-                agent_processes=AGENT_PROCESSES,
+                # agent_processes=AGENT_PROCESSES,
                 n_processes=N_PROCESSES,
                 n_steps=N_STEPS,
                 construct_graphs=False,

@@ -29,7 +29,7 @@ from numpy.random import choice
 
 # required for development
 from scml.std import *
-from AgeAgeAgent import AgeAgeAgent
+from AgeAgeAgentV2 import AgeAgeAgentV2
 
 from pathlib import Path
 from make_scml_log_viewer import generate_html_log
@@ -135,7 +135,7 @@ if __name__ == '__main__':
     name_map_2025 = {cls.__name__: cls for cls in all_agents_2025}
 
     #エージェントの担当工場を変更する場合、typesのエージェントの順番を変える
-    types = [AgeAgeAgent] + list(all_agents_2024) + list(all_agents_2025)
+    types = [AgeAgeAgentV2] + list(all_agents_2024) + list(all_agents_2025)
     types = types + types
     random.shuffle(types)
 

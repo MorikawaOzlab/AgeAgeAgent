@@ -22,6 +22,22 @@ class AgeAgeAgentV2(AgeAgeAgent):
         # 1step保管するのにかかる在庫コスト
         self.INVENTORY_COST_PER_UNIT_PER_STEP = 1
 
+    def step(self):
+        super().step()
+        inventory = self.awi.current_inventory_input
+        n_lines = self.awi.n_lines
+        cost = self.awi.profile.cost
+
+        inventory_ratio = inventory / n_lines
+
+        if inventory_ratio <= 2:
+            self.MIN_PROFIT = cost
+        elif inventory_ratio >= 3:
+            self.MIN_PROFIT = 0
+        else:
+            # 2倍で cost、3倍で 0 に線形減少
+            self.MIN_PROFIT = cost * (3 - inventory_ratio)
+
     def counter_all(self, offers, states):
         self.update_concession_stats(offers, states)
 
@@ -90,9 +106,18 @@ class AgeAgeAgentV2(AgeAgeAgent):
             if partner not in matched_sell_partners
         }
 
-        # 今は余った契約にはカウンターを出さず、デフォルトで END_NEGOTIATION にする
-        # あとで first_proposals と同じ方法でカウンターを作るならここに追加する
+        # 余ったオファーに対しては内容を書き換えてカウンター
+        response |= self.make_counter_responses_for_unmatched_offers(
+            unmatched_buy,
+            "buy_offer",
+            states,
+        )
 
+        response |= self.make_counter_responses_for_unmatched_offers(
+            unmatched_sell,
+            "sell_offer",
+            states,
+        )
         return response
 
     def is_exogenous_mode(self) -> bool:
@@ -392,7 +417,115 @@ class AgeAgeAgentV2(AgeAgeAgent):
             used_sell_partners.update(best_sell_offers.keys())
 
         return matched_buy, matched_sell
+    
+    def make_counter_responses_for_unmatched_offers(
+        self,
+        unmatched_offers,
+        mode: Literal["buy_offer", "sell_offer"],
+        states,
+    ):
+        """
+        余ったオファーに対して、こちらの都合で作り直したカウンターオファーを返す。
 
+        方針:
+        1. 元オファーの quantity / time / price は使わない。
+        2. partner だけを使う。
+        3. 取引量は相手の平均契約量を使う。
+        4. 価格は get_valid_price で作る。
+        5. 納期はナップサックで割り当てる。
+        """
+
+        response = {}
+
+        if not unmatched_offers:
+            return response
+
+        # カウンター対象の相手だけを取り出す
+        partners = list(unmatched_offers.keys())
+
+        # 最終stepでは将来納期に回せないので、カウンターしない
+        if self.awi.current_step >= self.awi.n_steps:
+            return response
+
+        # ナップサックに渡すための仮オファーを作る
+        # この時点の納期は仮で、あとでナップサック側で決め直す
+        base_offers = self.make_base_counter_offers_for_partners(
+            partners,
+            step=self.awi.current_step,
+            states=states,
+        )
+
+        if not base_offers:
+            return response
+
+        # 納期をナップサックで割り当てる
+        assigned_offers = self.assign_delivery_steps_by_score_knapsack(
+            base_offers,
+            mode,
+            self.awi.current_step,
+        )
+
+        # 割り当てられたオファーをカウンターとして返す
+        for partner, offer in assigned_offers.items():
+            state = states.get(partner)
+            current_round = state.step if state is not None else 0
+
+            # 納期と数量はナップサック後のものを使い、
+            # 価格は現在ラウンドに応じて作り直す
+            new_offer = (
+                offer[QUANTITY],
+                offer[TIME],
+                self.get_valid_price(
+                    partner,
+                    current_round=current_round,
+                ),
+            )
+
+            response[partner] = SAOResponse(
+                ResponseType.REJECT_OFFER,
+                new_offer,
+            )
+
+        return response
+    
+    def make_base_counter_offers_for_partners(
+        self,
+        partners,
+        step: int,
+        states,
+    ):
+        """
+        カウンター用のベースオファーを作る。
+
+        ここでは納期は仮で入れる。
+        実際の納期は assign_delivery_steps_by_score_knapsack で決める。
+        """
+
+        offers = {}
+
+        for partner in partners:
+            state = states.get(partner)
+            current_round = state.step if state is not None else 0
+
+            # 取引量は相手の平均契約量を使う
+            quantity = self.get_avg_offer_quantity(partner)
+
+            if quantity <= 0:
+                continue
+
+            # 価格はこちらにとって妥当な価格にする
+            price = self.get_valid_price(
+                partner,
+                current_round=current_round,
+            )
+
+            offers[partner] = (
+                quantity,
+                step,
+                price,
+            )
+
+        return offers
 
 def group_offers_by_delivery_time(
     offers: dict[str, Outcome],
